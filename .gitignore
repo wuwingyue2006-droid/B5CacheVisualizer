@@ -1,0 +1,26 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.aps
+*.VC.db
+*.VC.opendb
+*.ipch
+
+# Build output
+Debug/
+Release/
+x64/
+x86/
+
+# Intermediate files
+*.obj
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.lastbuildstate
+*.log
+
+# Generated executable
+*.exe
