@@ -6,7 +6,7 @@
 成员代号：C
 负责模块：FIFO / LRU 替换策略
 个人分支：feature-replacement
-前置条件：项目骨架已经合并到 dev，组长已经允许开始
+前置条件：已确认代号 C；从最新 dev 创建 feature-replacement；工作区状态已检查
 ```
 
 ## 允许主要修改的文件
