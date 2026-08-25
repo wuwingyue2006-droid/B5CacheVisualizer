@@ -8,7 +8,7 @@
 
 | 代号 | 分支 | 任务卡 |
 |---|---|---|
-| A | `feature-core` | `A-core.md` |
+| A（技术组长） | `feature-core` | `A-core.md` |
 | B | `feature-mapping` | `B-mapping.md` |
 | C | `feature-replacement` | `C-replacement.md` |
 | D | `feature-ui` | `D-ui.md` |
@@ -18,12 +18,16 @@
 
 组长给每位成员发送：
 
-1. 《B5 组员 Git 一步一步操作卡》；
-2. 该成员自己的任务卡；
-3. 仓库地址；
-4. 明确的“允许开始”通知。
+1. 《B5 成员本地 AI 与 Git 协作完整流程》；
+2. 《B5 五人精确分工与组长职责》；
+3. 该成员自己的任务卡；
+4. 仓库地址；
+5. 成员代号和准确的个人分支名；
+6. 明确的“允许创建个人分支”和“允许开始写代码”通知。
 
-成员把自己的任务卡交给本地 AI，要求 AI 先读取仓库根目录 `AGENTS.md`、`docs/ARCHITECTURE.md`、`docs/INTERFACES.md`、`docs/OWNERSHIP.md` 和该任务卡。
+成员的 AI 不需要具备 GitHub 插件、网页访问或账号登录能力。GitHub 邀请、浏览器授权和 Pull Request 页面由成员本人操作；AI 只依据本地仓库、Git 命令输出和任务卡进行指导。
+
+成员把自己的任务卡交给本地 AI，要求 AI 先读取仓库根目录 `AGENTS.md`、`docs/ARCHITECTURE.md`、`docs/INTERFACES.md`、`docs/OWNERSHIP.md`、`docs/B5成员本地AI与Git协作完整流程.md` 和该任务卡。
 
 ## 3. 第一次创建分支
 
