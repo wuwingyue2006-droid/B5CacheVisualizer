@@ -95,6 +95,8 @@ scripts/              固定构建和测试脚本
 - [公共接口](docs/INTERFACES.md)
 - [文件归属](docs/OWNERSHIP.md)
 - [五人任务卡说明](docs/tasks/README.md)
+- [五人精确分工与组长职责](docs/B5五人精确分工与组长职责.md)
+- [本地 AI 与 Git 协作完整流程](docs/B5成员本地AI与Git协作完整流程.md)
 - [第一次加入 GitHub 项目流程](docs/B5成员第一次加入GitHub项目流程.md)
 - [组员 Git 一步一步操作卡](docs/B5组员Git一步一步操作卡.md)
 - [组长集成手册](docs/LEADER_INTEGRATION.md)

@@ -4,7 +4,7 @@
 
 | 成员 | 分支 | 模块 | 主要目录 | 独立测试文件 |
 |---|---|---|---|---|
-| A | `feature-core` | Core / 多级流程 | `src/core/` | `CoreTests.cpp` |
+| A（技术组长） | `feature-core` | Core / 多级流程 / 系统集成 | `src/core/` | `CoreTests.cpp` |
 | B | `feature-mapping` | Mapping | `src/mapping/` | `MappingTests.cpp` |
 | C | `feature-replacement` | Replacement | `src/replacement/` | `ReplacementTests.cpp` |
 | D | `feature-ui` | MFC UI | `B5CacheVisualizer/` | 人工 UI 测试清单 |
