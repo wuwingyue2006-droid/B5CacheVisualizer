@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="UI"><UniqueIdentifier>{98B3DEBF-ED41-40AD-A7DB-7114FCDCD89D}</UniqueIdentifier></Filter>
+    <Filter Include="Core"><UniqueIdentifier>{D19390C3-C869-434E-9BBB-C8453E88BC50}</UniqueIdentifier></Filter>
+    <Filter Include="Mapping"><UniqueIdentifier>{6DF655FC-398F-4100-807D-373A33686601}</UniqueIdentifier></Filter>
+    <Filter Include="Replacement"><UniqueIdentifier>{8F264CB9-71DD-4050-9471-6E906EC47E8F}</UniqueIdentifier></Filter>
+    <Filter Include="Statistics and Trace"><UniqueIdentifier>{6A59ACFF-7769-4BB4-85D7-F02EDE5F2957}</UniqueIdentifier></Filter>
+    <Filter Include="Common"><UniqueIdentifier>{16AA4884-F33E-4B3A-89BB-FD34F69FD5C6}</UniqueIdentifier></Filter>
+    <Filter Include="Resources"><UniqueIdentifier>{433DF71E-5D23-4559-80B3-94C94141F205}</UniqueIdentifier></Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="B5CacheVisualizer.cpp"><Filter>UI</Filter></ClCompile><ClCompile Include="B5CacheVisualizerDlg.cpp"><Filter>UI</Filter></ClCompile><ClCompile Include="pch.cpp"><Filter>UI</Filter></ClCompile>
+    <ClCompile Include="..\src\common\CacheTypes.cpp"><Filter>Common</Filter></ClCompile><ClCompile Include="..\src\core\CacheLevel.cpp"><Filter>Core</Filter></ClCompile><ClCompile Include="..\src\core\CacheSimulator.cpp"><Filter>Core</Filter></ClCompile><ClCompile Include="..\src\mapping\MappingStrategies.cpp"><Filter>Mapping</Filter></ClCompile><ClCompile Include="..\src\replacement\ReplacementPolicies.cpp"><Filter>Replacement</Filter></ClCompile><ClCompile Include="..\src\statistics\CacheStatistics.cpp"><Filter>Statistics and Trace</Filter></ClCompile><ClCompile Include="..\src\trace\MemoryTraceParser.cpp"><Filter>Statistics and Trace</Filter></ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="B5CacheVisualizer.h"><Filter>UI</Filter></ClInclude><ClInclude Include="B5CacheVisualizerDlg.h"><Filter>UI</Filter></ClInclude><ClInclude Include="framework.h"><Filter>UI</Filter></ClInclude><ClInclude Include="pch.h"><Filter>UI</Filter></ClInclude><ClInclude Include="targetver.h"><Filter>UI</Filter></ClInclude><ClInclude Include="resource.h"><Filter>Resources</Filter></ClInclude>
+    <ClInclude Include="..\src\common\CacheTypes.h"><Filter>Common</Filter></ClInclude><ClInclude Include="..\src\core\CacheLevel.h"><Filter>Core</Filter></ClInclude><ClInclude Include="..\src\core\CacheSimulator.h"><Filter>Core</Filter></ClInclude><ClInclude Include="..\src\mapping\IMappingStrategy.h"><Filter>Mapping</Filter></ClInclude><ClInclude Include="..\src\replacement\IReplacementPolicy.h"><Filter>Replacement</Filter></ClInclude><ClInclude Include="..\src\statistics\CacheStatistics.h"><Filter>Statistics and Trace</Filter></ClInclude><ClInclude Include="..\src\trace\MemoryTraceParser.h"><Filter>Statistics and Trace</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup><ResourceCompile Include="B5CacheVisualizer.rc"><Filter>Resources</Filter></ResourceCompile></ItemGroup>
+</Project>

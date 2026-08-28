@@ -12,6 +12,9 @@ Debug/
 Release/
 x64/
 x86/
+bin/
+obj/
+TestResults/
 
 # Intermediate files
 *.obj
@@ -21,6 +24,12 @@ x86/
 *.tlog
 *.lastbuildstate
 *.log
+*.res
+*.exp
 
 # Generated executable
 *.exe
+
+# Other editors
+.idea/
+*.code-workspace
