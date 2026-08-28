@@ -29,6 +29,11 @@ std::uint64_t ParseAddress(const std::string& token, const std::size_t lineNumbe
         base = 16;
     }
 
+    if (digits.empty() || digits.front() == '-' || digits.front() == '+') {
+        throw std::invalid_argument(
+            "Trace line " + std::to_string(lineNumber) + " has an invalid address: " + token);
+    }
+
     try {
         std::size_t consumed = 0;
         const auto address = std::stoull(digits, &consumed, base);
