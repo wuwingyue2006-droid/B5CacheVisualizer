@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <sstream>
 #include <stdexcept>
 
@@ -13,6 +14,32 @@ std::string Trim(std::string value) {
     value.erase(value.begin(), std::find_if(value.begin(), value.end(), isNotSpace));
     value.erase(std::find_if(value.rbegin(), value.rend(), isNotSpace).base(), value.end());
     return value;
+}
+
+std::uint64_t ParseAddress(const std::string& token, const std::size_t lineNumber) {
+    if (token.empty() || token.front() == '-' || token.front() == '+') {
+        throw std::invalid_argument(
+            "Trace line " + std::to_string(lineNumber) + " has an invalid address: " + token);
+    }
+
+    std::string digits = token;
+    auto base = 10;
+    if (token.size() >= 2 && token[0] == '0' && (token[1] == 'x' || token[1] == 'X')) {
+        digits = token.substr(2);
+        base = 16;
+    }
+
+    try {
+        std::size_t consumed = 0;
+        const auto address = std::stoull(digits, &consumed, base);
+        if (digits.empty() || consumed != digits.size()) {
+            throw std::invalid_argument("trailing characters");
+        }
+        return address;
+    } catch (const std::exception&) {
+        throw std::invalid_argument(
+            "Trace line " + std::to_string(lineNumber) + " has an invalid address: " + token);
+    }
 }
 
 }  // namespace
@@ -49,25 +76,31 @@ std::vector<MemoryAccess> MemoryTraceParser::ParseText(const std::string& text) 
             addressToken = firstToken;
         }
 
-        try {
-            std::size_t consumed = 0;
-            const auto address = std::stoull(addressToken, &consumed, 0);
-            if (consumed != addressToken.size()) {
-                throw std::invalid_argument("trailing characters");
-            }
-            accesses.push_back({address, isWrite});
-        } catch (const std::exception&) {
+        std::string extraToken;
+        if (lineInput >> extraToken) {
             throw std::invalid_argument(
-                "Trace line " + std::to_string(lineNumber) + " has an invalid address: " + addressToken);
+                "Trace line " + std::to_string(lineNumber) + " has an unexpected token: " + extraToken);
         }
+
+        accesses.push_back({ParseAddress(addressToken, lineNumber), isWrite});
     }
 
     return accesses;
 }
 
-std::vector<MemoryAccess> MemoryTraceParser::ParseFile(const std::filesystem::path&) {
-    // TODO(E): read the file and reuse ParseText so text and file imports share one format.
-    throw std::logic_error("Trace file import is assigned to member E.");
+std::vector<MemoryAccess> MemoryTraceParser::ParseFile(const std::filesystem::path& path) {
+    std::ifstream input(path);
+    if (!input) {
+        throw std::runtime_error("Unable to open trace file: " + path.string());
+    }
+
+    std::ostringstream text;
+    text << input.rdbuf();
+    if (input.bad()) {
+        throw std::runtime_error("Unable to read trace file: " + path.string());
+    }
+
+    return ParseText(text.str());
 }
 
 }  // namespace b5cache
