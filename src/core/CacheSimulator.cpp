@@ -33,18 +33,13 @@ AccessResult CacheSimulator::Access(const MemoryAccess& request) {
         result.outcome = AccessOutcome::L2Hit;
     } else {
         result.outcome = AccessOutcome::MemoryMiss;
-        const auto insertion = l2_.Insert(l2Block, request.isWrite, tick_);
-        result.l2.lineIndex = insertion.lineIndex;
-        result.l2.evicted = insertion.evicted;
-        result.l2.evictedBlock = insertion.evictedBlock;
+        result.l2 = l2_.Insert(l2Block, request.isWrite, tick_);
     }
 
-    const auto l1Insertion = l1_.Insert(l1Block, request.isWrite, tick_);
-    result.l1.lineIndex = l1Insertion.lineIndex;
-    result.l1.evicted = l1Insertion.evicted;
-    result.l1.evictedBlock = l1Insertion.evictedBlock;
+    result.l1 = l1_.Insert(l1Block, request.isWrite, tick_);
 
-    // TODO(A): harden this simplified non-inclusive, write-allocate flow for the full config matrix.
+    // This teaching model is non-inclusive and uses write-allocate at both levels.
+    // L1 and L2 map the request independently because their block sizes may differ.
     statistics_.Record(result);
     return result;
 }
