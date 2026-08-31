@@ -85,15 +85,21 @@ std::size_t CacheLevel::LineCount() const noexcept {
 }
 
 std::size_t CacheLevel::ValidateAndGetLineCount(const CacheLevelConfig& config) {
-    if (config.sizeBytes == 0 || config.blockSizeBytes == 0) {
-        throw std::invalid_argument(config.name + " size and block size must be positive.");
+    if (config.sizeBytes == 0) {
+        throw std::invalid_argument(config.name + " size must be positive.");
+    }
+    if (config.blockSizeBytes == 0) {
+        throw std::invalid_argument(config.name + " block size must be positive.");
     }
     if (config.sizeBytes % config.blockSizeBytes != 0) {
         throw std::invalid_argument(config.name + " size must be divisible by block size.");
     }
 
     const auto lineCount = config.sizeBytes / config.blockSizeBytes;
-    if (config.associativity == 0 || lineCount % config.associativity != 0) {
+    if (config.associativity == 0) {
+        throw std::invalid_argument(config.name + " associativity must be positive.");
+    }
+    if (lineCount % config.associativity != 0) {
         throw std::invalid_argument(config.name + " associativity must divide the line count.");
     }
 
@@ -113,6 +119,16 @@ std::size_t CacheLevel::ValidateAndGetLineCount(const CacheLevelConfig& config) 
             throw std::invalid_argument(config.name + " set associative mapping requires 1 < ways < line count.");
         }
         break;
+    default:
+        throw std::invalid_argument(config.name + " has an unknown mapping kind.");
+    }
+
+    switch (config.replacement) {
+    case ReplacementKind::Fifo:
+    case ReplacementKind::Lru:
+        break;
+    default:
+        throw std::invalid_argument(config.name + " has an unknown replacement kind.");
     }
 
     return lineCount;

@@ -59,6 +59,8 @@ void TestTraceInvalidInput() {
     RequireInvalidTrace("R\n", "line 1");
     RequireInvalidTrace("R 12 extra\n", "unexpected token: extra");
     RequireInvalidTrace("# comment\nR 0xZZ\n", "line 2");
+    RequireInvalidTrace("0x-1\n", "line 1");
+    RequireInvalidTrace("0x+1\n", "line 1");
     RequireInvalidTrace("18446744073709551616\n", "line 1");
 }
 
