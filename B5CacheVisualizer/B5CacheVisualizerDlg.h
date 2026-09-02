@@ -24,9 +24,11 @@ private:
     afx_msg void OnStepTrace();
     afx_msg void OnRunAllTrace();
     afx_msg void OnResetSimulation();
+    afx_msg void OnCustomDrawCacheView(NMHDR* notification, LRESULT* result);
 
     bool ReadConfiguration(b5cache::SimulationConfig& config) const;
-    bool LoadTraceFromEditor(std::vector<b5cache::MemoryAccess>& accesses) const;
+    bool ParseTraceFromEditor(std::vector<b5cache::MemoryAccess>& accesses) const;
+    bool LoadTraceFromEditor(std::vector<b5cache::MemoryAccess>& accesses);
     void ResetSession();
     void ExecuteNextAccess();
     void RefreshCacheViews(const b5cache::AccessResult* latest = nullptr);
@@ -35,6 +37,7 @@ private:
     void ShowUserError(const std::string& message) const;
     void ClearCacheView(CListCtrl& view) const;
     void SetupCacheViewColumns(CListCtrl& view) const;
+    void RefreshLastResult(const b5cache::AccessResult* result);
 
     std::unique_ptr<b5cache::CacheSimulator> simulator_;
     std::vector<b5cache::MemoryAccess> trace_;

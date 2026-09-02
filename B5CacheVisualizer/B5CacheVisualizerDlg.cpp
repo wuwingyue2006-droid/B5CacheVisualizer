@@ -5,6 +5,7 @@
 #include "trace/MemoryTraceParser.h"
 
 #include <atlconv.h>
+#include <cerrno>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -46,6 +47,21 @@ std::wstring ToText(const b5cache::MemoryAccess& access) {
     return stream.str();
 }
 
+bool SameTrace(
+    const std::vector<b5cache::MemoryAccess>& left,
+    const std::vector<b5cache::MemoryAccess>& right) {
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.size(); ++index) {
+        if (left[index].address != right[index].address ||
+            left[index].isWrite != right[index].isWrite) {
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
@@ -55,6 +71,8 @@ BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BUTTON_STEP, &CB5CacheVisualizerDlg::OnStepTrace)
     ON_BN_CLICKED(IDC_BUTTON_RUN_ALL, &CB5CacheVisualizerDlg::OnRunAllTrace)
     ON_BN_CLICKED(IDC_BUTTON_RESET, &CB5CacheVisualizerDlg::OnResetSimulation)
+    ON_NOTIFY(NM_CUSTOMDRAW, IDC_L1_CACHE_VIEW, &CB5CacheVisualizerDlg::OnCustomDrawCacheView)
+    ON_NOTIFY(NM_CUSTOMDRAW, IDC_L2_CACHE_VIEW, &CB5CacheVisualizerDlg::OnCustomDrawCacheView)
 END_MESSAGE_MAP()
 
 CB5CacheVisualizerDlg::CB5CacheVisualizerDlg(CWnd* parent)
@@ -213,18 +231,33 @@ bool CB5CacheVisualizerDlg::ReadConfiguration(b5cache::SimulationConfig& config)
     }
 }
 
-bool CB5CacheVisualizerDlg::LoadTraceFromEditor(std::vector<b5cache::MemoryAccess>& accesses) const {
+bool CB5CacheVisualizerDlg::ParseTraceFromEditor(std::vector<b5cache::MemoryAccess>& accesses) const {
     CString traceText;
     GetDlgItemText(IDC_EDIT_TRACE, traceText);
 
     try {
         const CW2A narrowText(traceText, CP_UTF8);
-        accesses = b5cache::MemoryTraceParser::ParseText(narrowText.m_psz);
+        auto parsedTrace = b5cache::MemoryTraceParser::ParseText(narrowText.m_psz);
+        accesses = std::move(parsedTrace);
         return true;
     } catch (const std::exception& error) {
         ShowUserError(error.what());
         return false;
     }
+}
+
+bool CB5CacheVisualizerDlg::LoadTraceFromEditor(std::vector<b5cache::MemoryAccess>& accesses) {
+    std::vector<b5cache::MemoryAccess> parsedTrace;
+    if (!ParseTraceFromEditor(parsedTrace)) {
+        return false;
+    }
+
+    if (!SameTrace(parsedTrace, trace_)) {
+        trace_ = parsedTrace;
+        ResetSession();
+    }
+    accesses = std::move(parsedTrace);
+    return true;
 }
 
 void CB5CacheVisualizerDlg::ResetSession() {
@@ -265,11 +298,7 @@ void CB5CacheVisualizerDlg::ExecuteNextAccess() {
     RefreshStatistics();
     RefreshCacheViews(&lastResult_);
 
-    std::wstringstream summary;
-    summary << L"Last Result: " << OutcomeText(lastResult_.outcome)
-            << L" | L1 set " << lastResult_.l1.setIndex << L" line " << lastResult_.l1.lineIndex
-            << L" | L2 set " << lastResult_.l2.setIndex << L" line " << lastResult_.l2.lineIndex;
-    SetDlgItemText(IDC_STATIC_LAST_RESULT, summary.str().c_str());
+    RefreshLastResult(&lastResult_);
 }
 
 void CB5CacheVisualizerDlg::RefreshCacheViews(const b5cache::AccessResult* latest) {
@@ -286,20 +315,20 @@ void CB5CacheVisualizerDlg::RefreshCacheViews(const b5cache::AccessResult* lates
 
                 if (latest != nullptr) {
                     if (isL1) {
-                        if (latest->outcome == b5cache::AccessOutcome::L1Hit && latest->l1.setIndex == setIndex && latest->l1.lineIndex == lineIndex) {
+                        if (latest->l1.evicted && latest->l1.setIndex == setIndex && latest->l1.lineIndex == lineIndex) {
+                            state = L"Replaced -> New";
+                        } else if (latest->outcome == b5cache::AccessOutcome::L1Hit && latest->l1.setIndex == setIndex && latest->l1.lineIndex == lineIndex) {
                             state = L"L1 Hit";
                         } else if (latest->l1.setIndex == setIndex && latest->l1.lineIndex == lineIndex && !latest->l1.hit) {
                             state = L"New";
-                        } else if (latest->l1.evicted && latest->l1.setIndex == setIndex && latest->l1.lineIndex == lineIndex) {
-                            state = L"Replaced";
                         }
                     } else {
-                        if (latest->outcome == b5cache::AccessOutcome::L2Hit && latest->l2.setIndex == setIndex && latest->l2.lineIndex == lineIndex) {
+                        if (latest->l2.evicted && latest->l2.setIndex == setIndex && latest->l2.lineIndex == lineIndex) {
+                            state = L"Replaced -> New";
+                        } else if (latest->outcome == b5cache::AccessOutcome::L2Hit && latest->l2.setIndex == setIndex && latest->l2.lineIndex == lineIndex) {
                             state = L"L2 Hit";
                         } else if (latest->l2.setIndex == setIndex && latest->l2.lineIndex == lineIndex && !latest->l2.hit) {
                             state = L"New";
-                        } else if (latest->l2.evicted && latest->l2.setIndex == setIndex && latest->l2.lineIndex == lineIndex) {
-                            state = L"Replaced";
                         }
                     }
                 }
@@ -314,9 +343,6 @@ void CB5CacheVisualizerDlg::RefreshCacheViews(const b5cache::AccessResult* lates
                 view.SetItemText(itemIndex, 7, std::to_wstring(static_cast<unsigned long long>(line.lastUsedAt)).c_str());
                 view.SetItemText(itemIndex, 8, state.c_str());
 
-                if (state != L"Idle") {
-                    view.SetItemState(itemIndex, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-                }
             }
         }
     };
@@ -360,6 +386,48 @@ void CB5CacheVisualizerDlg::RefreshTraceStatus() {
     SetDlgItemText(IDC_STATIC_TRACE_INDEX, summary);
 }
 
+void CB5CacheVisualizerDlg::RefreshLastResult(const b5cache::AccessResult* result) {
+    if (result == nullptr) {
+        SetDlgItemText(IDC_STATIC_LAST_RESULT, L"Last Result: none");
+        return;
+    }
+
+    std::wstringstream summary;
+    switch (result->outcome) {
+    case b5cache::AccessOutcome::L1Hit:
+        summary << L"Last Result: L1 Hit | L1 set " << result->l1.setIndex;
+        if (result->l1.lineIndex != b5cache::kInvalidIndex) {
+            summary << L" line " << result->l1.lineIndex;
+        }
+        summary << L" | L2 Not Accessed";
+        break;
+    case b5cache::AccessOutcome::L2Hit:
+        summary << L"Last Result: L1 Miss | L2 Hit (set " << result->l2.setIndex;
+        if (result->l2.lineIndex != b5cache::kInvalidIndex) {
+            summary << L" line " << result->l2.lineIndex;
+        }
+        summary << L") | L1 fill";
+        if (result->l1.lineIndex != b5cache::kInvalidIndex) {
+            summary << L" set " << result->l1.setIndex << L" line " << result->l1.lineIndex;
+        }
+        break;
+    case b5cache::AccessOutcome::MemoryMiss:
+        summary << L"Last Result: L1/L2 Miss | L2 fill";
+        if (result->l2.lineIndex != b5cache::kInvalidIndex) {
+            summary << L" set " << result->l2.setIndex << L" line " << result->l2.lineIndex;
+        }
+        summary << L" | L1 fill";
+        if (result->l1.lineIndex != b5cache::kInvalidIndex) {
+            summary << L" set " << result->l1.setIndex << L" line " << result->l1.lineIndex;
+        }
+        if (result->l1.evicted || result->l2.evicted) {
+            summary << L" | eviction";
+        }
+        break;
+    }
+    SetDlgItemText(IDC_STATIC_LAST_RESULT, summary.str().c_str());
+}
+
 void CB5CacheVisualizerDlg::ShowUserError(const std::string& message) const {
     const CA2W wideMessage(message.c_str(), CP_UTF8);
     AfxMessageBox(wideMessage, MB_OK | MB_ICONERROR);
@@ -386,6 +454,32 @@ void CB5CacheVisualizerDlg::SetupCacheViewColumns(CListCtrl& view) const {
     view.InsertColumn(8, L"State", LVCFMT_LEFT, 80);
 }
 
+void CB5CacheVisualizerDlg::OnCustomDrawCacheView(NMHDR* notification, LRESULT* result) {
+    auto* draw = reinterpret_cast<NMLVCUSTOMDRAW*>(notification);
+    *result = CDRF_DODEFAULT;
+    if (draw->nmcd.dwDrawStage == CDDS_PREPAINT) {
+        *result = CDRF_NOTIFYITEMDRAW;
+        return;
+    }
+    if (draw->nmcd.dwDrawStage != (CDDS_ITEMPREPAINT)) {
+        return;
+    }
+
+    const auto itemIndex = static_cast<int>(draw->nmcd.dwItemSpec);
+    CListCtrl* view = draw->nmcd.hdr.hwndFrom == l1CacheView_.GetSafeHwnd() ? &l1CacheView_ : &l2CacheView_;
+    const CString state = view->GetItemText(itemIndex, 8);
+    if (state == L"L1 Hit" || state == L"L2 Hit") {
+        draw->clrText = RGB(0, 100, 0);
+        draw->clrTextBk = RGB(220, 245, 220);
+    } else if (state == L"New") {
+        draw->clrText = RGB(0, 70, 150);
+        draw->clrTextBk = RGB(220, 235, 255);
+    } else if (state == L"Replaced -> New") {
+        draw->clrText = RGB(150, 60, 0);
+        draw->clrTextBk = RGB(255, 225, 190);
+    }
+}
+
 void CB5CacheVisualizerDlg::OnApplyConfig() {
     b5cache::SimulationConfig config;
     if (!ReadConfiguration(config)) {
@@ -393,10 +487,13 @@ void CB5CacheVisualizerDlg::OnApplyConfig() {
     }
 
     try {
-        simulator_ = std::make_unique<b5cache::CacheSimulator>(config);
-        if (!LoadTraceFromEditor(trace_)) {
+        std::vector<b5cache::MemoryAccess> parsedTrace;
+        if (!ParseTraceFromEditor(parsedTrace)) {
             return;
         }
+        auto newSimulator = std::make_unique<b5cache::CacheSimulator>(config);
+        simulator_ = std::move(newSimulator);
+        trace_ = std::move(parsedTrace);
         ResetSession();
     } catch (const std::exception& error) {
         ShowUserError(error.what());
@@ -410,27 +507,14 @@ void CB5CacheVisualizerDlg::OnImportTrace() {
     }
 
     try {
-        const CStringA narrowPath(CW2A(fileDialog.GetPathName(), CP_UTF8));
-        std::ifstream input(narrowPath, std::ios::in | std::ios::binary);
-        if (!input) {
-            ShowUserError("Unable to open trace file.");
-            return;
+        const std::filesystem::path path(fileDialog.GetPathName().GetString());
+        const auto importedTrace = b5cache::MemoryTraceParser::ParseFile(path);
+        std::wstringstream traceText;
+        for (const auto& access : importedTrace) {
+            traceText << ToText(access) << L"\r\n";
         }
-
-        std::ostringstream stream;
-        stream << input.rdbuf();
-        if (input.bad()) {
-            ShowUserError("Unable to read trace file.");
-            return;
-        }
-
-        const std::string text = stream.str();
-        const CA2W wideText(text.c_str(), CP_UTF8);
-        SetDlgItemText(IDC_EDIT_TRACE, wideText);
-
-        if (!LoadTraceFromEditor(trace_)) {
-            return;
-        }
+        SetDlgItemText(IDC_EDIT_TRACE, traceText.str().c_str());
+        trace_ = importedTrace;
         ResetSession();
     } catch (const std::exception& error) {
         ShowUserError(error.what());
@@ -470,6 +554,11 @@ void CB5CacheVisualizerDlg::OnRunAllTrace() {
             return;
         }
 
+        if (trace_.empty()) {
+            ShowUserError("Trace is empty. Add at least one access before running.");
+            return;
+        }
+
         while (nextIndex_ < trace_.size()) {
             lastResult_ = simulator_->Access(trace_[nextIndex_]);
             hasLastResult_ = true;
@@ -479,11 +568,9 @@ void CB5CacheVisualizerDlg::OnRunAllTrace() {
         }
 
         RefreshTraceStatus();
-        std::wstringstream summary;
-        summary << L"Last Result: " << OutcomeText(lastResult_.outcome)
-                << L" | L1 set " << lastResult_.l1.setIndex << L" line " << lastResult_.l1.lineIndex
-                << L" | L2 set " << lastResult_.l2.setIndex << L" line " << lastResult_.l2.lineIndex;
-        SetDlgItemText(IDC_STATIC_LAST_RESULT, summary.str().c_str());
+        if (hasLastResult_) {
+            RefreshLastResult(&lastResult_);
+        }
     } catch (const std::exception& error) {
         ShowUserError(error.what());
     }
