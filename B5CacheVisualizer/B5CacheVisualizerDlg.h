@@ -24,6 +24,7 @@ private:
     afx_msg void OnStepTrace();
     afx_msg void OnRunAllTrace();
     afx_msg void OnResetSimulation();
+    afx_msg void OnDrawItem(int controlId, LPDRAWITEMSTRUCT drawItem);
     afx_msg void OnCustomDrawCacheView(NMHDR* notification, LRESULT* result);
 
     bool ReadConfiguration(b5cache::SimulationConfig& config) const;
@@ -33,6 +34,10 @@ private:
     void ExecuteNextAccess();
     void RefreshCacheViews(const b5cache::AccessResult* latest = nullptr);
     void RefreshStatistics();
+    void RecordStatisticsPoint();
+    void RefreshStatisticsCharts() const;
+    void DrawOutcomeChart(CDC& dc, const CRect& bounds) const;
+    void DrawHitRateChart(CDC& dc, const CRect& bounds) const;
     void RefreshTraceStatus();
     void ShowUserError(const std::string& message) const;
     void ClearCacheView(CListCtrl& view) const;
@@ -44,6 +49,7 @@ private:
     std::size_t nextIndex_ = 0;
     b5cache::AccessResult lastResult_;
     bool hasLastResult_ = false;
+    std::vector<double> overallHitRateHistory_;
     CListCtrl l1CacheView_;
     CListCtrl l2CacheView_;
 };

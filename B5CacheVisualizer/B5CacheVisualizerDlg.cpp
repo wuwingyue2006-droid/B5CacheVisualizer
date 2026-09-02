@@ -5,6 +5,7 @@
 #include "trace/MemoryTraceParser.h"
 
 #include <atlconv.h>
+#include <algorithm>
 #include <cerrno>
 #include <filesystem>
 #include <fstream>
@@ -71,6 +72,7 @@ BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BUTTON_STEP, &CB5CacheVisualizerDlg::OnStepTrace)
     ON_BN_CLICKED(IDC_BUTTON_RUN_ALL, &CB5CacheVisualizerDlg::OnRunAllTrace)
     ON_BN_CLICKED(IDC_BUTTON_RESET, &CB5CacheVisualizerDlg::OnResetSimulation)
+    ON_WM_DRAWITEM()
     ON_NOTIFY(NM_CUSTOMDRAW, IDC_L1_CACHE_VIEW, &CB5CacheVisualizerDlg::OnCustomDrawCacheView)
     ON_NOTIFY(NM_CUSTOMDRAW, IDC_L2_CACHE_VIEW, &CB5CacheVisualizerDlg::OnCustomDrawCacheView)
 END_MESSAGE_MAP()
@@ -269,6 +271,7 @@ void CB5CacheVisualizerDlg::ResetSession() {
     nextIndex_ = 0;
     hasLastResult_ = false;
     lastResult_ = {};
+    overallHitRateHistory_.clear();
     RefreshTraceStatus();
     RefreshStatistics();
     RefreshCacheViews();
@@ -294,6 +297,7 @@ void CB5CacheVisualizerDlg::ExecuteNextAccess() {
     lastResult_ = simulator_->Access(trace_[nextIndex_]);
     hasLastResult_ = true;
     ++nextIndex_;
+    RecordStatisticsPoint();
     RefreshTraceStatus();
     RefreshStatistics();
     RefreshCacheViews(&lastResult_);
@@ -355,6 +359,7 @@ void CB5CacheVisualizerDlg::RefreshStatistics() {
     if (simulator_ == nullptr) {
         SetDlgItemText(IDC_EDIT_RESULT, L"No simulator available.");
         SetDlgItemText(IDC_STATIC_SUMMARY, L"Current requests: 0");
+        RefreshStatisticsCharts();
         return;
     }
 
@@ -377,6 +382,158 @@ void CB5CacheVisualizerDlg::RefreshStatistics() {
     CString summary;
     summary.Format(L"Current requests: %llu", static_cast<unsigned long long>(snapshot.accesses));
     SetDlgItemText(IDC_STATIC_SUMMARY, summary);
+    RefreshStatisticsCharts();
+}
+
+void CB5CacheVisualizerDlg::RecordStatisticsPoint() {
+    if (simulator_ == nullptr) {
+        return;
+    }
+    overallHitRateHistory_.push_back(simulator_->Statistics().OverallHitRate());
+}
+
+void CB5CacheVisualizerDlg::RefreshStatisticsCharts() const {
+    for (const int controlId : {IDC_STATIC_OUTCOME_CHART, IDC_STATIC_RATE_CHART}) {
+        if (CWnd* chart = GetDlgItem(controlId); chart != nullptr) {
+            chart->Invalidate(FALSE);
+        }
+    }
+}
+
+void CB5CacheVisualizerDlg::DrawOutcomeChart(CDC& dc, const CRect& bounds) const {
+    const COLORREF l1Color = RGB(62, 168, 101);
+    const COLORREF l2Color = RGB(65, 125, 220);
+    const COLORREF missColor = RGB(232, 112, 78);
+    const COLORREF colors[] = {l1Color, l2Color, missColor};
+
+    dc.SetBkMode(TRANSPARENT);
+    dc.SetTextColor(RGB(45, 45, 45));
+    CRect title(bounds.left + 6, bounds.top + 3, bounds.right - 4, bounds.top + 21);
+    dc.DrawText(L"Outcome Mix", &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+    if (simulator_ == nullptr || simulator_->Statistics().accesses == 0) {
+        CRect empty(bounds.left + 6, bounds.top + 24, bounds.right - 6, bounds.bottom - 4);
+        dc.SetTextColor(RGB(120, 120, 120));
+        dc.DrawText(L"No accesses yet", &empty, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        return;
+    }
+
+    const auto snapshot = simulator_->Statistics();
+    const double rates[] = {snapshot.L1HitRate(), snapshot.L2HitRate(), snapshot.MissRate()};
+    const wchar_t* labels[] = {L"L1", L"L2", L"Miss"};
+    const int contentTop = title.bottom + 2;
+    const int availableHeight = static_cast<int>(bounds.bottom - contentTop - 4);
+    const int rowHeight = (std::max)(17, availableHeight / 3);
+    const int chartWidth = static_cast<int>(bounds.Width());
+    const int labelWidth = (std::min)(70, (std::max)(48, chartWidth / 3));
+
+    for (int index = 0; index < 3; ++index) {
+        const int top = contentTop + index * rowHeight;
+        CString label;
+        label.Format(L"%s %3.0f%%", labels[index], rates[index] * 100.0);
+        CRect labelRect(bounds.left + 6, top, bounds.left + 6 + labelWidth, top + rowHeight);
+        dc.SetTextColor(RGB(70, 70, 70));
+        dc.DrawText(label, &labelRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+        CRect track(labelRect.right + 3, top + 4, bounds.right - 7, top + rowHeight - 4);
+        if (track.Height() < 5) {
+            track.bottom = track.top + 5;
+        }
+        dc.FillSolidRect(track, RGB(232, 235, 239));
+        CRect fill = track;
+        fill.right = fill.left + static_cast<int>(static_cast<double>(track.Width()) * rates[index] + 0.5);
+        if (fill.right > fill.left) {
+            dc.FillSolidRect(fill, colors[index]);
+        }
+    }
+}
+
+void CB5CacheVisualizerDlg::DrawHitRateChart(CDC& dc, const CRect& bounds) const {
+    const COLORREF lineColor = RGB(65, 125, 220);
+    dc.SetBkMode(TRANSPARENT);
+    dc.SetTextColor(RGB(45, 45, 45));
+    CRect title(bounds.left + 6, bounds.top + 3, bounds.right - 4, bounds.top + 21);
+    dc.DrawText(L"Cumulative Hit Rate", &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+    if (overallHitRateHistory_.empty()) {
+        CRect empty(bounds.left + 6, bounds.top + 24, bounds.right - 6, bounds.bottom - 4);
+        dc.SetTextColor(RGB(120, 120, 120));
+        dc.DrawText(L"No accesses yet", &empty, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        return;
+    }
+
+    CRect plot(bounds.left + 34, title.bottom + 11, bounds.right - 8, bounds.bottom - 15);
+    if (plot.Width() < 10 || plot.Height() < 10) {
+        return;
+    }
+
+    CPen gridPen(PS_SOLID, 1, RGB(210, 214, 220));
+    CPen* oldPen = dc.SelectObject(&gridPen);
+    dc.MoveTo(plot.left, plot.top);
+    dc.LineTo(plot.left, plot.bottom);
+    dc.LineTo(plot.right, plot.bottom);
+    dc.MoveTo(plot.left, plot.top + plot.Height() / 2);
+    dc.LineTo(plot.right, plot.top + plot.Height() / 2);
+
+    dc.SetTextColor(RGB(110, 110, 110));
+    CRect topLabel(bounds.left + 2, plot.top - 8, plot.left - 4, plot.top + 7);
+    CRect bottomLabel(bounds.left + 2, plot.bottom - 8, plot.left - 3, plot.bottom + 7);
+    dc.DrawText(L"100", &topLabel, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+    dc.DrawText(L"0", &bottomLabel, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+
+    CPen ratePen(PS_SOLID, 2, lineColor);
+    dc.SelectObject(&ratePen);
+    const std::size_t pointCount = overallHitRateHistory_.size();
+    for (std::size_t index = 0; index < pointCount; ++index) {
+        const double xFraction = pointCount == 1
+            ? 1.0
+            : static_cast<double>(index) / static_cast<double>(pointCount - 1);
+        const double rate = std::clamp(overallHitRateHistory_[index], 0.0, 1.0);
+        const int x = plot.left + static_cast<int>(xFraction * static_cast<double>(plot.Width()) + 0.5);
+        const int y = plot.bottom - static_cast<int>(rate * static_cast<double>(plot.Height()) + 0.5);
+        if (index == 0) {
+            dc.MoveTo(x, y);
+        } else {
+            dc.LineTo(x, y);
+        }
+        dc.Ellipse(x - 2, y - 2, x + 3, y + 3);
+    }
+    dc.SelectObject(oldPen);
+
+    CString sampleLabel;
+    sampleLabel.Format(L"%llu accesses", static_cast<unsigned long long>(pointCount));
+    CRect xLabel(plot.left, plot.bottom + 1, plot.right, bounds.bottom - 1);
+    dc.SetTextColor(RGB(95, 95, 95));
+    dc.DrawText(sampleLabel, &xLabel, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
+}
+
+void CB5CacheVisualizerDlg::OnDrawItem(const int controlId, LPDRAWITEMSTRUCT drawItem) {
+    if (controlId != IDC_STATIC_OUTCOME_CHART && controlId != IDC_STATIC_RATE_CHART) {
+        CDialogEx::OnDrawItem(controlId, drawItem);
+        return;
+    }
+
+    CDC dc;
+    dc.Attach(drawItem->hDC);
+    const CRect bounds(drawItem->rcItem);
+    dc.FillSolidRect(bounds, RGB(250, 251, 253));
+
+    CWnd* chart = GetDlgItem(controlId);
+    CFont* oldFont = nullptr;
+    if (chart != nullptr && chart->GetFont() != nullptr) {
+        oldFont = dc.SelectObject(chart->GetFont());
+    }
+
+    if (controlId == IDC_STATIC_OUTCOME_CHART) {
+        DrawOutcomeChart(dc, bounds);
+    } else {
+        DrawHitRateChart(dc, bounds);
+    }
+
+    if (oldFont != nullptr) {
+        dc.SelectObject(oldFont);
+    }
+    dc.Detach();
 }
 
 void CB5CacheVisualizerDlg::RefreshTraceStatus() {
@@ -563,6 +720,7 @@ void CB5CacheVisualizerDlg::OnRunAllTrace() {
             lastResult_ = simulator_->Access(trace_[nextIndex_]);
             hasLastResult_ = true;
             ++nextIndex_;
+            RecordStatisticsPoint();
             RefreshCacheViews(&lastResult_);
             RefreshStatistics();
         }
