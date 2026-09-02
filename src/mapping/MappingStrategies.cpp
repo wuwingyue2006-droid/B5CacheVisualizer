@@ -5,16 +5,32 @@
 namespace b5cache {
 namespace {
 
+void RequirePositiveDimensions(
+    const std::size_t lineCount,
+    const std::size_t associativity) {
+    if (lineCount == 0) {
+        throw std::invalid_argument("Line count must be greater than zero.");
+    }
+    if (associativity == 0) {
+        throw std::invalid_argument("Associativity must be greater than zero.");
+    }
+}
+
 class DirectMappingStrategy final : public IMappingStrategy {
 public:
     AddressMapping Locate(
         const std::uint64_t blockNumber,
         const std::size_t lineCount,
         const std::size_t associativity) const override {
-        if (lineCount == 0 || associativity != 1) {
-            throw std::invalid_argument("Direct mapping requires non-zero lines and associativity 1.");
+        RequirePositiveDimensions(lineCount, associativity);
+        if (associativity != 1) {
+            throw std::invalid_argument("Direct mapping requires associativity equal to 1.");
         }
-        return {static_cast<std::size_t>(blockNumber % lineCount), blockNumber / lineCount, lineCount};
+
+        return {
+            static_cast<std::size_t>(blockNumber % lineCount),
+            blockNumber / lineCount,
+            lineCount};
     }
 
     MappingKind Kind() const noexcept override {
@@ -25,11 +41,16 @@ public:
 class FullyAssociativeMappingStrategy final : public IMappingStrategy {
 public:
     AddressMapping Locate(
-        std::uint64_t,
-        std::size_t,
-        std::size_t) const override {
-        // TODO(B): implement fully associative address mapping and its validation.
-        throw std::logic_error("Fully associative mapping is assigned to member B.");
+        const std::uint64_t blockNumber,
+        const std::size_t lineCount,
+        const std::size_t associativity) const override {
+        RequirePositiveDimensions(lineCount, associativity);
+        if (associativity != lineCount) {
+            throw std::invalid_argument(
+                "Fully associative mapping requires associativity equal to line count.");
+        }
+
+        return {0, blockNumber, 1};
     }
 
     MappingKind Kind() const noexcept override {
@@ -40,11 +61,23 @@ public:
 class SetAssociativeMappingStrategy final : public IMappingStrategy {
 public:
     AddressMapping Locate(
-        std::uint64_t,
-        std::size_t,
-        std::size_t) const override {
-        // TODO(B): implement set-associative address mapping and its validation.
-        throw std::logic_error("Set associative mapping is assigned to member B.");
+        const std::uint64_t blockNumber,
+        const std::size_t lineCount,
+        const std::size_t associativity) const override {
+        RequirePositiveDimensions(lineCount, associativity);
+        if (associativity <= 1 || associativity >= lineCount) {
+            throw std::invalid_argument(
+                "Set associative mapping requires associativity greater than 1 and less than line count.");
+        }
+        if (lineCount % associativity != 0) {
+            throw std::invalid_argument("Line count must be divisible by associativity.");
+        }
+
+        const std::size_t setCount = lineCount / associativity;
+        return {
+            static_cast<std::size_t>(blockNumber % setCount),
+            blockNumber / setCount,
+            setCount};
     }
 
     MappingKind Kind() const noexcept override {
