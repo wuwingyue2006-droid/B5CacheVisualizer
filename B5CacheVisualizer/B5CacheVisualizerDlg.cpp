@@ -443,15 +443,15 @@ void CB5CacheVisualizerDlg::SetupCacheViewColumns(CListCtrl& view) const {
     }
 
     view.SetExtendedStyle(LVS_EX_GRIDLINES | LVS_EX_FULLROWSELECT);
-    view.InsertColumn(0, L"Set", LVCFMT_LEFT, 55);
-    view.InsertColumn(1, L"Line", LVCFMT_LEFT, 50);
-    view.InsertColumn(2, L"Valid", LVCFMT_LEFT, 60);
-    view.InsertColumn(3, L"Dirty", LVCFMT_LEFT, 60);
-    view.InsertColumn(4, L"Tag", LVCFMT_LEFT, 80);
-    view.InsertColumn(5, L"Block", LVCFMT_LEFT, 90);
-    view.InsertColumn(6, L"Inserted At", LVCFMT_LEFT, 90);
-    view.InsertColumn(7, L"Last Used At", LVCFMT_LEFT, 90);
-    view.InsertColumn(8, L"State", LVCFMT_LEFT, 80);
+    view.InsertColumn(0, L"Set", LVCFMT_LEFT, 45);
+    view.InsertColumn(1, L"Line", LVCFMT_LEFT, 40);
+    view.InsertColumn(2, L"Valid", LVCFMT_LEFT, 45);
+    view.InsertColumn(3, L"Dirty", LVCFMT_LEFT, 45);
+    view.InsertColumn(4, L"Tag", LVCFMT_LEFT, 55);
+    view.InsertColumn(5, L"Block", LVCFMT_LEFT, 60);
+    view.InsertColumn(6, L"Inserted", LVCFMT_LEFT, 65);
+    view.InsertColumn(7, L"Last Used", LVCFMT_LEFT, 65);
+    view.InsertColumn(8, L"State", LVCFMT_LEFT, 85);
 }
 
 void CB5CacheVisualizerDlg::OnCustomDrawCacheView(NMHDR* notification, LRESULT* result) {
