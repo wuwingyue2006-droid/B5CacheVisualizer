@@ -7,7 +7,7 @@
 分支：feature-04-locality-trace-generator
 主题：可复现的教学型访存序列生成
 前置：阶段 03 已合入 dev；开始编码前先把最新 origin/dev 合入本分支
-状态：待开发
+状态：已实现，待 PR 与人工 UI 验收
 ```
 
 本阶段提供可以直接进入现有 Trace 编辑框并由 `MemoryTraceParser` 执行的访存序列，用来直观演示时间局部性、空间局部性、冲突 Miss 和读写混合。
@@ -110,3 +110,17 @@ docs/tasks/04-locality-trace-generator.md
 ```text
 Add locality trace generator
 ```
+
+## 本分支实现与验收记录
+
+实现新增了独立的 `TraceGenerator`：五种模式统一返回 `std::vector<MemoryAccess>`，再格式化为已有解析器可直接读取的标准文本。随机、热点和混合读写模式均使用用户可见的显式种子；请求数、范围、步长、概率和 `uint64_t` 地址溢出均在写入编辑框前校验。
+
+界面在主窗口底部增加了生成器区域，包含五种模式、四个教学预设和“Generate + Load”。生成成功后会停止播放、替换 Trace、清除旧帧/统计/高亮，并可立即使用现有 Next、Run All 和 Auto 播放。失败时保留原 Trace 与当前会话。
+
+提交 PR 前的手工 UI 验收：
+
+1. 选择 `Sequential locality` 预设并点击 `Generate + Load`；Trace 编辑框应得到 32 条 `R 0x...`，然后可点击 Next。
+2. 选择 `Loop working set`；生成的前四个地址应以 16 字节为间隔，并从第五条开始重复。
+3. 选择 `Hot access` 或 `Mixed reads/writes`；保持参数不变，连续生成两次，文本应完全相同；Mixed 预设应同时出现 `R` 与 `W`。
+4. 先点击 Auto，再点击 Stop；随后生成任意预设。状态应回到 `Stopped F0/0`，统计、图表和两级表格均清空。
+5. 将 Count 设为 `0`，或将 Start 设为 `0xFFFFFFFFFFFFFFFF`、Range 设为 `2`；应显示错误提示，且编辑框中的原 Trace 不变。

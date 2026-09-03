@@ -2,6 +2,7 @@
 
 #include "VisualizationController.h"
 #include "core/CacheSimulator.h"
+#include "trace/TraceGenerator.h"
 
 #include <memory>
 #include <vector>
@@ -43,6 +44,9 @@ private:
     afx_msg void OnPausePlayback();
     afx_msg void OnStopPlayback();
     afx_msg void OnPlaybackSpeedChanged();
+    afx_msg void OnGenerateTrace();
+    afx_msg void OnGeneratorModeChanged();
+    afx_msg void OnGeneratorPresetChanged();
     afx_msg void OnTraceTextChanged();
     afx_msg void OnConfigurationChanged();
     afx_msg void OnTimer(UINT_PTR timerId);
@@ -51,6 +55,7 @@ private:
     afx_msg void OnCustomDrawCacheView(NMHDR* notification, LRESULT* result);
 
     bool ReadConfiguration(b5cache::SimulationConfig& config) const;
+    bool ReadTraceGenerationConfig(b5cache::TraceGenerationConfig& config) const;
     bool ParseTraceFromEditor(std::vector<b5cache::MemoryAccess>& accesses) const;
     bool LoadTraceFromEditor(std::vector<b5cache::MemoryAccess>& accesses);
     void ResetSession();
@@ -81,6 +86,8 @@ private:
     void StopPlaybackTimer();
     void FinishPlayback();
     void UpdateControlStates();
+    void UpdateGeneratorControlStates(bool sessionLocked);
+    void ApplyGeneratorPreset();
     b5cache::StatisticsSnapshot DisplayedStatistics() const noexcept;
 
     std::unique_ptr<b5cache::CacheSimulator> simulator_;

@@ -1,6 +1,7 @@
 #include "TestSuites.h"
 
 #include "trace/MemoryTraceParser.h"
+#include "trace/TraceGenerator.h"
 
 #include <chrono>
 #include <filesystem>
@@ -92,6 +93,72 @@ void TestTraceFileImport() {
     throw std::runtime_error("Missing trace file should throw std::runtime_error.");
 }
 
+void TestGeneratedTraceFormatsAndParses() {
+    TraceGenerationConfig config;
+    config.mode = TraceGenerationMode::Sequential;
+    config.requestCount = 4;
+    config.startAddress = 0x20;
+    config.addressRangeBytes = 64;
+    config.stepBytes = 16;
+
+    const auto generated = TraceGenerator::Generate(config);
+    Require(generated.size() == 4, "Sequential generator should create the requested count.");
+    Require(generated[0].address == 0x20 && generated[3].address == 0x50,
+            "Sequential generator should advance by the requested step.");
+    Require(MemoryTraceParser::ParseText(TraceGenerator::FormatText(generated)).size() == generated.size(),
+            "Formatted generated trace should be accepted by the existing parser.");
+}
+
+void TestGeneratedLoopAndSeededModes() {
+    TraceGenerationConfig loop;
+    loop.mode = TraceGenerationMode::Loop;
+    loop.requestCount = 6;
+    loop.addressRangeBytes = 64;
+    loop.stepBytes = 16;
+    loop.loopLength = 2;
+    const auto loopTrace = TraceGenerator::Generate(loop);
+    Require(loopTrace[0].address == 0 && loopTrace[1].address == 16 &&
+                loopTrace[2].address == 0 && loopTrace[3].address == 16,
+            "Loop generator should repeat exactly the requested working set.");
+
+    TraceGenerationConfig random;
+    random.mode = TraceGenerationMode::Random;
+    random.requestCount = 12;
+    random.addressRangeBytes = 256;
+    random.stepBytes = 16;
+    random.randomSeed = 42;
+    Require(TraceGenerator::FormatText(TraceGenerator::Generate(random)) ==
+                TraceGenerator::FormatText(TraceGenerator::Generate(random)),
+            "Random generation must be reproducible for the same explicit seed.");
+
+    random.mode = TraceGenerationMode::MixedReadWrite;
+    random.writeProbability = 1.0;
+    const auto writes = TraceGenerator::Generate(random);
+    for (const auto& access : writes) {
+        Require(access.isWrite, "A 100% write ratio must generate only write accesses.");
+    }
+}
+
+void TestGeneratedTraceValidation() {
+    auto requireInvalid = [](const TraceGenerationConfig& config, const std::string& message) {
+        try {
+            static_cast<void>(TraceGenerator::Generate(config));
+        } catch (const std::invalid_argument&) {
+            return;
+        }
+        throw std::runtime_error(message);
+    };
+
+    TraceGenerationConfig invalid;
+    invalid.requestCount = 0;
+    requireInvalid(invalid, "A zero request count should be rejected.");
+
+    invalid.requestCount = 2;
+    invalid.startAddress = UINT64_MAX;
+    invalid.addressRangeBytes = 2;
+    requireInvalid(invalid, "Address-range overflow should be rejected.");
+}
+
 }  // namespace
 
 void AddTraceTests(TestList& tests) {
@@ -99,6 +166,9 @@ void AddTraceTests(TestList& tests) {
     tests.push_back({"Trace: whitespace, comments and case", TestTraceWhitespaceCommentsAndCase});
     tests.push_back({"Trace: invalid input", TestTraceInvalidInput});
     tests.push_back({"Trace: file import", TestTraceFileImport});
+    tests.push_back({"Trace generator: formatting and parser compatibility", TestGeneratedTraceFormatsAndParses});
+    tests.push_back({"Trace generator: loop and seeded modes", TestGeneratedLoopAndSeededModes});
+    tests.push_back({"Trace generator: validation", TestGeneratedTraceValidation});
 }
 
 }  // namespace b5cache::tests
