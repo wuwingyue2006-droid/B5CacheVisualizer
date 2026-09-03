@@ -2,6 +2,7 @@
 
 #include "VisualizationController.h"
 #include "core/CacheSimulator.h"
+#include "experiment/ComparisonRunner.h"
 
 #include <memory>
 #include <vector>
@@ -44,6 +45,7 @@ private:
     afx_msg void OnStopPlayback();
     afx_msg void OnPlaybackSpeedChanged();
     afx_msg void OnGenerateTrace();
+    afx_msg void OnCompareStrategies();
     afx_msg void OnTraceTextChanged();
     afx_msg void OnConfigurationChanged();
     afx_msg void OnTimer(UINT_PTR timerId);
@@ -86,6 +88,7 @@ private:
 
     std::unique_ptr<b5cache::CacheSimulator> simulator_;
     std::vector<b5cache::MemoryAccess> trace_;
+    std::vector<b5cache::ComparisonPlan> comparisonPlans_;
     b5cacheui::VisualizationController visualization_;
     UINT_PTR playbackTimerId_ = 0;
     bool initialized_ = false;

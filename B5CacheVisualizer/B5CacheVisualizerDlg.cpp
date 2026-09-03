@@ -2,6 +2,7 @@
 
 #include "B5CacheVisualizer.h"
 #include "B5CacheVisualizerDlg.h"
+#include "ComparisonDlg.h"
 #include "TraceGeneratorDlg.h"
 #include "trace/MemoryTraceParser.h"
 #include "trace/TraceGenerator.h"
@@ -96,6 +97,7 @@ BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BUTTON_PAUSE, &CB5CacheVisualizerDlg::OnPausePlayback)
     ON_BN_CLICKED(IDC_BUTTON_STOP, &CB5CacheVisualizerDlg::OnStopPlayback)
     ON_BN_CLICKED(IDC_BUTTON_GENERATE_TRACE, &CB5CacheVisualizerDlg::OnGenerateTrace)
+    ON_BN_CLICKED(IDC_BUTTON_COMPARE, &CB5CacheVisualizerDlg::OnCompareStrategies)
     ON_CBN_SELCHANGE(IDC_COMBO_PLAYBACK_SPEED, &CB5CacheVisualizerDlg::OnPlaybackSpeedChanged)
     ON_EN_CHANGE(IDC_EDIT_TRACE, &CB5CacheVisualizerDlg::OnTraceTextChanged)
     ON_EN_CHANGE(IDC_EDIT_L1_SIZE, &CB5CacheVisualizerDlg::OnConfigurationChanged)
@@ -941,6 +943,7 @@ void CB5CacheVisualizerDlg::UpdateControlStates() {
              IDC_EDIT_TRACE,
              IDC_BUTTON_IMPORT,
              IDC_BUTTON_CLEAR_TRACE,
+             IDC_BUTTON_COMPARE,
              IDC_BUTTON_RUN}) {
         enable(controlId, !sessionLocked);
     }
@@ -964,6 +967,7 @@ void CB5CacheVisualizerDlg::UpdateControlStates() {
     enable(IDC_BUTTON_RESET, true);
     enable(IDC_COMBO_PLAYBACK_SPEED, true);
     enable(IDC_BUTTON_GENERATE_TRACE, !sessionLocked);
+    enable(IDC_BUTTON_COMPARE, !sessionLocked);
 }
 
 void CB5CacheVisualizerDlg::RefreshTraceStatus() {
@@ -1297,6 +1301,61 @@ void CB5CacheVisualizerDlg::OnGenerateTrace() {
         UpdateControlStates();
     } catch (const std::exception& error) {
         suppressTraceChange_ = false;
+        ShowUserError(error.what());
+    }
+}
+
+void CB5CacheVisualizerDlg::OnCompareStrategies() {
+    b5cache::SimulationConfig currentConfig;
+    std::vector<b5cache::MemoryAccess> parsedTrace;
+    if (!ReadConfiguration(currentConfig) || !ParseTraceFromEditor(parsedTrace)) {
+        return;
+    }
+
+    CComparisonDlg dialog(currentConfig, parsedTrace, comparisonPlans_, this);
+    const auto response = dialog.DoModal();
+    comparisonPlans_ = dialog.Plans();
+    if (response != IDOK || !dialog.LoadRequested() || dialog.SelectedPlan() == nullptr) {
+        return;
+    }
+
+    try {
+        const auto& plan = *dialog.SelectedPlan();
+        auto mappingIndex = [](const b5cache::MappingKind mapping) {
+            return mapping == b5cache::MappingKind::Direct ? 0 :
+                (mapping == b5cache::MappingKind::FullyAssociative ? 1 : 2);
+        };
+        auto replacementIndex = [](const b5cache::ReplacementKind replacement) {
+            return replacement == b5cache::ReplacementKind::Fifo ? 0 : 1;
+        };
+        suppressConfigurationChange_ = true;
+        SetDlgItemInt(IDC_EDIT_L1_SIZE, static_cast<UINT>(plan.config.l1.sizeBytes), FALSE);
+        SetDlgItemInt(IDC_EDIT_L1_BLOCK, static_cast<UINT>(plan.config.l1.blockSizeBytes), FALSE);
+        SetDlgItemInt(IDC_EDIT_L1_ASSOC, static_cast<UINT>(plan.config.l1.associativity), FALSE);
+        SetDlgItemInt(IDC_EDIT_L2_SIZE, static_cast<UINT>(plan.config.l2.sizeBytes), FALSE);
+        SetDlgItemInt(IDC_EDIT_L2_BLOCK, static_cast<UINT>(plan.config.l2.blockSizeBytes), FALSE);
+        SetDlgItemInt(IDC_EDIT_L2_ASSOC, static_cast<UINT>(plan.config.l2.associativity), FALSE);
+        static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_L1_MAPPING))->SetCurSel(mappingIndex(plan.config.l1.mapping));
+        static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_L1_REPLACEMENT))->SetCurSel(replacementIndex(plan.config.l1.replacement));
+        static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_L2_MAPPING))->SetCurSel(mappingIndex(plan.config.l2.mapping));
+        static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_L2_REPLACEMENT))->SetCurSel(replacementIndex(plan.config.l2.replacement));
+        suppressConfigurationChange_ = false;
+
+        std::wstringstream text;
+        for (const auto& access : dialog.Trace()) text << ToText(access) << L"\r\n";
+        suppressTraceChange_ = true;
+        SetDlgItemText(IDC_EDIT_TRACE, text.str().c_str());
+        suppressTraceChange_ = false;
+        simulator_ = std::make_unique<b5cache::CacheSimulator>(plan.config);
+        trace_ = dialog.Trace();
+        traceDirty_ = false;
+        configurationDirty_ = false;
+        ResetSession();
+        CString loaded; loaded.Format(L"Loaded comparison plan: %S", plan.name.c_str());
+        SetDlgItemText(IDC_STATIC_LAST_RESULT, loaded);
+    } catch (const std::exception& error) {
+        suppressTraceChange_ = false;
+        suppressConfigurationChange_ = false;
         ShowUserError(error.what());
     }
 }
