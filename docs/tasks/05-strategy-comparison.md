@@ -7,7 +7,7 @@
 分支：feature-05-strategy-comparison
 主题：同一 Trace 下的多配置并行实验与可视化对比
 前置：阶段 04 已合入 dev；开始编码前先把最新 origin/dev 合入本分支
-状态：待开发
+状态：已实现，待 PR 与人工 UI 验收
 ```
 
 本阶段把程序从单次模拟器提升为教学型实验比较平台：用户保存 2～3 套 Cache 配置，对同一条 Trace 独立运行，并在一个界面中比较结果。
@@ -110,3 +110,17 @@ docs/tasks/05-strategy-comparison.md
 ```text
 Add cache strategy comparison experiments
 ```
+
+## 本分支实现与验收记录
+
+新增纯 C++ `ComparisonRunner`：每次运行都会为每个方案新建独立 `CacheSimulator`，将同一份已解析的 `MemoryAccess` 序列传入，并直接返回已有 `StatisticsSnapshot`。方案数量限制为 2～3，名称必须非空且不重复；非法 L1/L2 配置会标明对应方案，避免混入旧结果。
+
+新增独立的 `Cache Strategy Comparison` 窗口，可保存最多三套方案、添加/更新当前主界面配置、删除方案、加载三套教学预设、使用冲突 Miss 教学 Trace、显示结果表和 Overall/Miss 比率条形图。选中方案后可一键带同一 Trace 回到主窗口继续单步和播放。
+
+提交 PR 前的手工 UI 验收：
+
+1. 点击主窗口 `Compare...`，再点击 `Teaching presets` 和 `Use conflict-miss teaching trace`；列表应有 Direct、2-way Set、Fully Associative 三项。
+2. 点击 `Run comparison`；结果表中每项 Accesses 均为 8，图中同时出现绿色 Overall 与红色 Miss 条。
+3. 选择一个方案并点击 `Load selected to main`；主窗口的 L1/L2 参数和 Trace 应更新，状态应重置，然后可使用 Next。
+4. 在主窗口更改 L1/L2 并 Apply，再打开 Compare，选中方案后点击 `Update current`；重新运行应使用更新后的配置。
+5. 删除至仅一项后运行，应给出“requires two or three plans”提示且不显示旧结果。
