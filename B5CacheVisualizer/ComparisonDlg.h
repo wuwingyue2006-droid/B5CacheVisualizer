@@ -45,5 +45,6 @@ private:
     std::vector<b5cache::MemoryAccess> trace_;
     std::vector<b5cache::ComparisonPlan> plans_;
     std::vector<b5cache::ComparisonResult> results_;
+    int loadedPlanIndex_ = -1;
     bool loadRequested_ = false;
 };

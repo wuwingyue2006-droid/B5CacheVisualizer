@@ -7,7 +7,7 @@
 分支：feature-05-strategy-comparison
 主题：同一 Trace 下的多配置并行实验与可视化对比
 前置：阶段 04 已合入 dev；开始编码前先把最新 origin/dev 合入本分支
-状态：已实现，待 PR 与人工 UI 验收
+状态：已修复并通过开发侧自动化测试与 UI 验收，待补丁 PR 合入
 ```
 
 本阶段把程序从单次模拟器提升为教学型实验比较平台：用户保存 2～3 套 Cache 配置，对同一条 Trace 独立运行，并在一个界面中比较结果。
@@ -124,3 +124,12 @@ Add cache strategy comparison experiments
 3. 选择一个方案并点击 `Load selected to main`；主窗口的 L1/L2 参数和 Trace 应更新，状态应重置，然后可使用 Next。
 4. 在主窗口更改 L1/L2 并 Apply，再打开 Compare，选中方案后点击 `Update current`；重新运行应使用更新后的配置。
 5. 删除至仅一项后运行，应给出“requires two or three plans”提示且不显示旧结果。
+
+### 2026-09-03 补丁修复与开发侧验收
+
+- 修复主窗口 `Compare...` 按钮被状态文字遮挡的问题，并保留地址拆分面板的可读空间。
+- 方案新增或更新、教学预设或 Trace 变化以及运行失败时都会清除旧结果，避免把上一次统计误认为本轮结果。
+- 教学 Trace 调整为 8 次访问；实测 Direct、2-way Set、Fully Associative 的 Memory Miss 分别为 8、5、3，三种策略差异明确。
+- 修复对比窗口关闭后继续读取已销毁列表控件导致的 MFC Debug 断言；选中方案现可安全载入主界面，状态重置为 `F0/0 D0/8`，随后可正常单步执行。
+- 扩大图表标签和百分比区域；三项完整名称及 Overall/Miss 数值在 1366×768 环境下均可见。
+- Debug x64 完整构建结果为 0 警告、0 错误；核心测试 68/68 通过。
