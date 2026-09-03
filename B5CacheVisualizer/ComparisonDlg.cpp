@@ -48,8 +48,9 @@ const std::vector<b5cache::MemoryAccess>& CComparisonDlg::Trace() const noexcept
 bool CComparisonDlg::LoadRequested() const noexcept { return loadRequested_; }
 
 const b5cache::ComparisonPlan* CComparisonDlg::SelectedPlan() const noexcept {
-    const auto index = SelectedIndex();
-    return index < 0 ? nullptr : &plans_[static_cast<std::size_t>(index)];
+    return loadedPlanIndex_ < 0 || loadedPlanIndex_ >= static_cast<int>(plans_.size())
+        ? nullptr
+        : &plans_[static_cast<std::size_t>(loadedPlanIndex_)];
 }
 
 BOOL CComparisonDlg::OnInitDialog() {
@@ -125,7 +126,9 @@ void CComparisonDlg::OnAddCurrent() {
     auto name = ReadName();
     if (name.empty()) name = "Plan " + std::to_string(plans_.size() + 1);
     plans_.push_back({name, currentConfig_});
+    results_.clear();
     RefreshPlans();
+    RefreshResults();
 }
 
 void CComparisonDlg::OnUpdateCurrent() {
@@ -134,7 +137,9 @@ void CComparisonDlg::OnUpdateCurrent() {
     const auto name = ReadName();
     if (name.empty()) { AfxMessageBox(L"Plan name must not be empty.", MB_OK | MB_ICONERROR); return; }
     plans_[static_cast<std::size_t>(index)] = {name, currentConfig_};
+    results_.clear();
     RefreshPlans();
+    RefreshResults();
 }
 
 void CComparisonDlg::OnRemove() {
@@ -158,30 +163,34 @@ void CComparisonDlg::OnTeachingPresets() {
 }
 
 std::vector<b5cache::MemoryAccess> CComparisonDlg::TeachingTrace() {
-    return {{0x00, false}, {0x40, false}, {0x80, false}, {0x00, false},
-            {0x40, false}, {0x80, false}, {0x00, false}, {0x40, false}};
+    return {{0x00, false}, {0x80, false}, {0x00, false}, {0x80, false},
+            {0x40, false}, {0x00, false}, {0x80, false}, {0x00, false}};
 }
 
 void CComparisonDlg::OnUseTeachingTrace() {
     trace_ = TeachingTrace();
     SetDlgItemText(IDC_STATIC_COMPARE_TRACE,
-                   L"Teaching trace: blocks conflict in Direct; Set/Fully show fewer conflict misses.");
+                   L"Teaching trace: Direct, 2-way Set and Fully Associative produce distinct miss rates.");
     results_.clear();
     RefreshResults();
 }
 
 void CComparisonDlg::OnRunComparison() {
+    results_.clear();
     try {
         results_ = b5cache::ComparisonRunner::Run(plans_, trace_);
         RefreshResults();
     } catch (const std::exception& error) {
+        RefreshResults();
         const CA2W message(error.what(), CP_UTF8);
         AfxMessageBox(message, MB_OK | MB_ICONERROR);
     }
 }
 
 void CComparisonDlg::OnLoadSelected() {
-    if (SelectedPlan() == nullptr) { AfxMessageBox(L"Select a plan to load.", MB_OK | MB_ICONINFORMATION); return; }
+    const auto index = SelectedIndex();
+    if (index < 0) { AfxMessageBox(L"Select a plan to load.", MB_OK | MB_ICONINFORMATION); return; }
+    loadedPlanIndex_ = index;
     loadRequested_ = true;
     CDialogEx::OnOK();
 }
@@ -198,8 +207,9 @@ void CComparisonDlg::OnDrawItem(const int controlId, LPDRAWITEMSTRUCT drawItem) 
         const int rowHeight = (std::max)(1, area.Height() / static_cast<int>(results_.size()));
         for (std::size_t index = 0; index < results_.size(); ++index) {
             const int top = area.top + static_cast<int>(index) * rowHeight;
-            const int labelWidth = 155;
-            const int barWidth = area.Width() - labelWidth - 80;
+            const int labelWidth = 230;
+            const int valueWidth = 145;
+            const int barWidth = (std::max)(1, area.Width() - labelWidth - valueWidth - 10);
             const auto& s = results_[index].statistics;
             CRect label(area.left + 4, top, area.left + labelWidth, top + rowHeight);
             const CA2W name(results_[index].planName.c_str(), CP_UTF8);
@@ -210,7 +220,7 @@ void CComparisonDlg::OnDrawItem(const int controlId, LPDRAWITEMSTRUCT drawItem) 
             dc.FillSolidRect(area.left + labelWidth, top + 3, overall, 7, RGB(62, 168, 101));
             dc.FillSolidRect(area.left + labelWidth, top + 12, miss, 7, RGB(232, 112, 78));
             CString values; values.Format(L"O %.0f%%  M %.0f%%", s.OverallHitRate() * 100.0, s.MissRate() * 100.0);
-            CRect value(area.right - 75, top, area.right - 2, top + rowHeight);
+            CRect value(area.right - valueWidth - 4, top, area.right - 4, top + rowHeight);
             dc.DrawText(values, &value, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
         }
     }
