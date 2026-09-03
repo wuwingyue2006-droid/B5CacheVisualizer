@@ -1,6 +1,7 @@
 #include "TestSuites.h"
 
 #include "trace/MemoryTraceParser.h"
+#include "trace/TraceGenerator.h"
 
 #include <chrono>
 #include <filesystem>
@@ -92,6 +93,126 @@ void TestTraceFileImport() {
     throw std::runtime_error("Missing trace file should throw std::runtime_error.");
 }
 
+void TestGeneratedTraceFormatsAndParses() {
+    TraceGenerationConfig config;
+    config.mode = TraceGenerationMode::Sequential;
+    config.requestCount = 4;
+    config.startAddress = 0x20;
+    config.addressRangeBytes = 64;
+    config.stepBytes = 16;
+
+    const auto generated = TraceGenerator::Generate(config);
+    Require(generated.size() == 4, "Sequential generator should create the requested count.");
+    Require(generated[0].address == 0x20 && generated[3].address == 0x50,
+            "Sequential generator should advance by the requested step.");
+    const auto formatted = TraceGenerator::FormatText(generated);
+    Require(formatted == "R 0x20\r\nR 0x30\r\nR 0x40\r\nR 0x50\r\n",
+            "Formatted generated trace should use Windows line endings and canonical hexadecimal text.");
+    Require(MemoryTraceParser::ParseText(formatted).size() == generated.size(),
+            "Formatted generated trace should be accepted by the existing parser.");
+}
+
+void TestGeneratedLoopAndSeededModes() {
+    TraceGenerationConfig loop;
+    loop.mode = TraceGenerationMode::Loop;
+    loop.requestCount = 6;
+    loop.addressRangeBytes = 64;
+    loop.stepBytes = 16;
+    loop.loopLength = 2;
+    const auto loopTrace = TraceGenerator::Generate(loop);
+    Require(loopTrace[0].address == 0 && loopTrace[1].address == 16 &&
+                loopTrace[2].address == 0 && loopTrace[3].address == 16,
+            "Loop generator should repeat exactly the requested working set.");
+
+    TraceGenerationConfig random;
+    random.mode = TraceGenerationMode::Random;
+    random.requestCount = 12;
+    random.addressRangeBytes = 256;
+    random.stepBytes = 16;
+    random.randomSeed = 42;
+    Require(TraceGenerator::FormatText(TraceGenerator::Generate(random)) ==
+                TraceGenerator::FormatText(TraceGenerator::Generate(random)),
+            "Random generation must be reproducible for the same explicit seed.");
+
+    random.mode = TraceGenerationMode::MixedReadWrite;
+    random.writeProbability = 1.0;
+    const auto writes = TraceGenerator::Generate(random);
+    for (const auto& access : writes) {
+        Require(access.isWrite, "A 100% write ratio must generate only write accesses.");
+    }
+}
+
+void TestGeneratedHotSet() {
+    TraceGenerationConfig hotSet;
+    hotSet.mode = TraceGenerationMode::HotSet;
+    hotSet.requestCount = 64;
+    hotSet.addressRangeBytes = 256;
+    hotSet.stepBytes = 16;
+    hotSet.hotSetSize = 3;
+    hotSet.hotProbability = 1.0;
+    hotSet.randomSeed = 20260903;
+
+    const auto first = TraceGenerator::Generate(hotSet);
+    const auto second = TraceGenerator::Generate(hotSet);
+    Require(TraceGenerator::FormatText(first) == TraceGenerator::FormatText(second),
+            "Hot-set generation must be reproducible for the same explicit seed.");
+    for (const auto& access : first) {
+        Require(access.address < 48, "A 100% hot-set probability must select only hot addresses.");
+    }
+
+    hotSet.hotProbability = 0.0;
+    const auto coldOnly = TraceGenerator::Generate(hotSet);
+    for (const auto& access : coldOnly) {
+        Require(access.address >= 48 && access.address < 256,
+                "A 0% hot-set probability must select only cold addresses inside the configured range.");
+    }
+}
+
+void TestGeneratedTraceValidation() {
+    auto requireInvalid = [](const TraceGenerationConfig& config, const std::string& message) {
+        try {
+            static_cast<void>(TraceGenerator::Generate(config));
+        } catch (const std::invalid_argument&) {
+            return;
+        }
+        throw std::runtime_error(message);
+    };
+
+    TraceGenerationConfig invalid;
+    invalid.requestCount = 0;
+    requireInvalid(invalid, "A zero request count should be rejected.");
+
+    invalid.requestCount = 2;
+    invalid.startAddress = UINT64_MAX;
+    invalid.addressRangeBytes = 2;
+    requireInvalid(invalid, "Address-range overflow should be rejected.");
+
+    invalid = TraceGenerationConfig{};
+    invalid.requestCount = 10001;
+    requireInvalid(invalid, "An excessive request count should be rejected.");
+
+    invalid = TraceGenerationConfig{};
+    invalid.stepBytes = 0;
+    requireInvalid(invalid, "A zero step should be rejected.");
+
+    invalid = TraceGenerationConfig{};
+    invalid.mode = TraceGenerationMode::Loop;
+    invalid.loopLength = 17;
+    invalid.addressRangeBytes = 256;
+    invalid.stepBytes = 16;
+    requireInvalid(invalid, "A loop larger than the address range should be rejected.");
+
+    invalid = TraceGenerationConfig{};
+    invalid.mode = TraceGenerationMode::HotSet;
+    invalid.hotProbability = 1.01;
+    requireInvalid(invalid, "A hot-set probability greater than one should be rejected.");
+
+    invalid = TraceGenerationConfig{};
+    invalid.mode = TraceGenerationMode::MixedReadWrite;
+    invalid.writeProbability = -0.01;
+    requireInvalid(invalid, "A negative write probability should be rejected.");
+}
+
 }  // namespace
 
 void AddTraceTests(TestList& tests) {
@@ -99,6 +220,10 @@ void AddTraceTests(TestList& tests) {
     tests.push_back({"Trace: whitespace, comments and case", TestTraceWhitespaceCommentsAndCase});
     tests.push_back({"Trace: invalid input", TestTraceInvalidInput});
     tests.push_back({"Trace: file import", TestTraceFileImport});
+    tests.push_back({"Trace generator: formatting and parser compatibility", TestGeneratedTraceFormatsAndParses});
+    tests.push_back({"Trace generator: loop and seeded modes", TestGeneratedLoopAndSeededModes});
+    tests.push_back({"Trace generator: hot-set locality", TestGeneratedHotSet});
+    tests.push_back({"Trace generator: validation", TestGeneratedTraceValidation});
 }
 
 }  // namespace b5cache::tests

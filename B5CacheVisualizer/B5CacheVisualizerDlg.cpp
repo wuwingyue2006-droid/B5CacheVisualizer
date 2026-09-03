@@ -2,7 +2,9 @@
 
 #include "B5CacheVisualizer.h"
 #include "B5CacheVisualizerDlg.h"
+#include "TraceGeneratorDlg.h"
 #include "trace/MemoryTraceParser.h"
+#include "trace/TraceGenerator.h"
 
 #include <atlconv.h>
 #include <algorithm>
@@ -10,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -18,6 +21,8 @@
 #endif
 
 namespace {
+
+constexpr UINT_PTR kPlaybackTimerId = 1;
 
 const wchar_t* ToWide(const std::string& value) {
     static std::wstring converted;
@@ -63,6 +68,20 @@ bool SameTrace(
     return true;
 }
 
+const wchar_t* PlaybackStateText(const b5cacheui::PlaybackState state) {
+    switch (state) {
+    case b5cacheui::PlaybackState::Playing:
+        return L"Playing";
+    case b5cacheui::PlaybackState::Paused:
+        return L"Paused";
+    case b5cacheui::PlaybackState::Reviewing:
+        return L"Reviewing";
+    case b5cacheui::PlaybackState::Stopped:
+    default:
+        return L"Stopped";
+    }
+}
+
 }  // namespace
 
 BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
@@ -72,6 +91,25 @@ BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BUTTON_STEP, &CB5CacheVisualizerDlg::OnStepTrace)
     ON_BN_CLICKED(IDC_BUTTON_RUN_ALL, &CB5CacheVisualizerDlg::OnRunAllTrace)
     ON_BN_CLICKED(IDC_BUTTON_RESET, &CB5CacheVisualizerDlg::OnResetSimulation)
+    ON_BN_CLICKED(IDC_BUTTON_PREVIOUS, &CB5CacheVisualizerDlg::OnPreviousFrame)
+    ON_BN_CLICKED(IDC_BUTTON_AUTOPLAY, &CB5CacheVisualizerDlg::OnAutoPlay)
+    ON_BN_CLICKED(IDC_BUTTON_PAUSE, &CB5CacheVisualizerDlg::OnPausePlayback)
+    ON_BN_CLICKED(IDC_BUTTON_STOP, &CB5CacheVisualizerDlg::OnStopPlayback)
+    ON_BN_CLICKED(IDC_BUTTON_GENERATE_TRACE, &CB5CacheVisualizerDlg::OnGenerateTrace)
+    ON_CBN_SELCHANGE(IDC_COMBO_PLAYBACK_SPEED, &CB5CacheVisualizerDlg::OnPlaybackSpeedChanged)
+    ON_EN_CHANGE(IDC_EDIT_TRACE, &CB5CacheVisualizerDlg::OnTraceTextChanged)
+    ON_EN_CHANGE(IDC_EDIT_L1_SIZE, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_EN_CHANGE(IDC_EDIT_L1_BLOCK, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_EN_CHANGE(IDC_EDIT_L1_ASSOC, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_EN_CHANGE(IDC_EDIT_L2_SIZE, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_EN_CHANGE(IDC_EDIT_L2_BLOCK, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_EN_CHANGE(IDC_EDIT_L2_ASSOC, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_CBN_SELCHANGE(IDC_COMBO_L1_MAPPING, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_CBN_SELCHANGE(IDC_COMBO_L1_REPLACEMENT, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_CBN_SELCHANGE(IDC_COMBO_L2_MAPPING, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_CBN_SELCHANGE(IDC_COMBO_L2_REPLACEMENT, &CB5CacheVisualizerDlg::OnConfigurationChanged)
+    ON_WM_TIMER()
+    ON_WM_DESTROY()
     ON_WM_DRAWITEM()
     ON_NOTIFY(NM_CUSTOMDRAW, IDC_L1_CACHE_VIEW, &CB5CacheVisualizerDlg::OnCustomDrawCacheView)
     ON_NOTIFY(NM_CUSTOMDRAW, IDC_L2_CACHE_VIEW, &CB5CacheVisualizerDlg::OnCustomDrawCacheView)
@@ -122,13 +160,20 @@ BOOL CB5CacheVisualizerDlg::OnInitDialog() {
         l2Replacement->SetCurSel(0);
     }
 
+    CComboBox* playbackSpeed = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_PLAYBACK_SPEED));
+    if (playbackSpeed != nullptr) {
+        playbackSpeed->AddString(L"Slow");
+        playbackSpeed->AddString(L"Normal");
+        playbackSpeed->AddString(L"Fast");
+        playbackSpeed->SetCurSel(1);
+    }
+
     SetDlgItemInt(IDC_EDIT_L1_SIZE, 64, FALSE);
     SetDlgItemInt(IDC_EDIT_L1_BLOCK, 16, FALSE);
     SetDlgItemInt(IDC_EDIT_L1_ASSOC, 1, FALSE);
     SetDlgItemInt(IDC_EDIT_L2_SIZE, 128, FALSE);
     SetDlgItemInt(IDC_EDIT_L2_BLOCK, 16, FALSE);
     SetDlgItemInt(IDC_EDIT_L2_ASSOC, 1, FALSE);
-
     SetDlgItemText(
         IDC_EDIT_TRACE,
         L"# Miss -> L1 Hit -> L2 Hit -> Dirty/Eviction\r\n"
@@ -147,9 +192,12 @@ BOOL CB5CacheVisualizerDlg::OnInitDialog() {
         ShowUserError(error.what());
     }
 
-    RefreshStatistics();
-    RefreshCacheViews();
-    RefreshAccessVisuals();
+    initialized_ = true;
+    suppressTraceChange_ = false;
+    suppressConfigurationChange_ = false;
+    traceDirty_ = false;
+    configurationDirty_ = false;
+    RefreshCurrentFrame();
     return TRUE;
 }
 
@@ -259,59 +307,97 @@ bool CB5CacheVisualizerDlg::LoadTraceFromEditor(std::vector<b5cache::MemoryAcces
         trace_ = parsedTrace;
         ResetSession();
     }
+    traceDirty_ = false;
     accesses = std::move(parsedTrace);
     return true;
 }
 
 void CB5CacheVisualizerDlg::ResetSession() {
+    StopPlaybackTimer();
     if (simulator_ == nullptr) {
         simulator_ = std::make_unique<b5cache::CacheSimulator>(b5cache::CacheSimulator::DefaultConfig());
     }
 
     simulator_->Reset();
-    nextIndex_ = 0;
-    hasLastResult_ = false;
-    lastResult_ = {};
-    overallHitRateHistory_.clear();
-    RefreshTraceStatus();
-    RefreshStatistics();
-    RefreshCacheViews();
-    RefreshLastResult(nullptr);
+    visualization_.Reset();
+    RefreshCurrentFrame();
 }
 
-void CB5CacheVisualizerDlg::ExecuteNextAccess() {
+bool CB5CacheVisualizerDlg::ExecuteNextAccess(const bool showEndMessage) {
     if (simulator_ == nullptr) {
-        ShowUserError("No simulator is available.");
-        return;
+        if (showEndMessage) {
+            ShowUserError("No simulator is available.");
+        }
+        return false;
     }
 
     if (trace_.empty()) {
-        ShowUserError("Trace is empty. Add at least one access before stepping.");
-        return;
+        if (showEndMessage) {
+            ShowUserError("Trace is empty. Add at least one access before stepping.");
+        }
+        return false;
     }
 
-    if (nextIndex_ >= trace_.size()) {
-        ShowUserError("The trace has already been fully executed.");
-        return;
+    if (visualization_.HasRecordedNext()) {
+        visualization_.MoveNext();
+        RefreshCurrentFrame();
+        return true;
     }
 
-    lastResult_ = simulator_->Access(trace_[nextIndex_]);
-    hasLastResult_ = true;
-    ++nextIndex_;
-    RecordStatisticsPoint();
-    RefreshTraceStatus();
-    RefreshStatistics();
-    RefreshCacheViews(&lastResult_);
+    const auto nextIndex = visualization_.FrameCount();
+    if (nextIndex >= trace_.size()) {
+        if (showEndMessage) {
+            ShowUserError("The trace has already been fully executed.");
+        }
+        return false;
+    }
 
-    RefreshLastResult(&lastResult_);
+    const auto result = simulator_->Access(trace_[nextIndex]);
+    visualization_.Append(CaptureFrame(result));
+    RefreshCurrentFrame();
+    return true;
 }
 
-void CB5CacheVisualizerDlg::RefreshCacheViews(const b5cache::AccessResult* latest) {
+b5cacheui::VisualizationFrame CB5CacheVisualizerDlg::CaptureFrame(
+    const b5cache::AccessResult& result) const {
+    b5cacheui::VisualizationFrame frame;
+    frame.result = result;
+    if (simulator_ != nullptr) {
+        frame.statistics = simulator_->Statistics();
+        frame.l1Config = simulator_->L1().Config();
+        frame.l2Config = simulator_->L2().Config();
+        frame.l1Sets = simulator_->L1().Sets();
+        frame.l2Sets = simulator_->L2().Sets();
+    }
+    return frame;
+}
+
+bool CB5CacheVisualizerDlg::CanAdvancePlayback() const noexcept {
+    return visualization_.HasRecordedNext() || visualization_.FrameCount() < trace_.size();
+}
+
+void CB5CacheVisualizerDlg::RefreshCurrentFrame() {
+    const auto* frame = visualization_.Current();
+    RefreshTraceStatus();
+    RefreshStatistics(frame == nullptr ? nullptr : &frame->statistics);
+    RefreshCacheViews(frame);
+    RefreshLastResult(frame == nullptr ? nullptr : &frame->result);
+    UpdateControlStates();
+}
+
+void CB5CacheVisualizerDlg::RefreshCacheViews(const b5cacheui::VisualizationFrame* frame) {
     ClearCacheView(l1CacheView_);
     ClearCacheView(l2CacheView_);
 
-    auto renderLevel = [&](CListCtrl& view, const b5cache::CacheLevel& level, bool isL1) {
-        const auto& sets = level.Sets();
+    if (simulator_ == nullptr && frame == nullptr) {
+        return;
+    }
+
+    const b5cache::AccessResult* latest = frame == nullptr ? nullptr : &frame->result;
+    const auto& l1Sets = frame == nullptr ? simulator_->L1().Sets() : frame->l1Sets;
+    const auto& l2Sets = frame == nullptr ? simulator_->L2().Sets() : frame->l2Sets;
+
+    auto renderLevel = [&](CListCtrl& view, const b5cacheui::CacheSetsSnapshot& sets, const bool isL1) {
         for (std::size_t setIndex = 0; setIndex < sets.size(); ++setIndex) {
             const auto& set = sets[setIndex];
             for (std::size_t lineIndex = 0; lineIndex < set.size(); ++lineIndex) {
@@ -352,18 +438,18 @@ void CB5CacheVisualizerDlg::RefreshCacheViews(const b5cache::AccessResult* lates
         }
     };
 
-    renderLevel(l1CacheView_, simulator_->L1(), true);
-    renderLevel(l2CacheView_, simulator_->L2(), false);
+    renderLevel(l1CacheView_, l1Sets, true);
+    renderLevel(l2CacheView_, l2Sets, false);
 }
 
-void CB5CacheVisualizerDlg::RefreshStatistics() {
+void CB5CacheVisualizerDlg::RefreshStatistics(const b5cache::StatisticsSnapshot* displayed) {
     if (simulator_ == nullptr) {
         SetDlgItemText(IDC_EDIT_RESULT, L"No simulator available.");
         RefreshStatisticsCharts();
         return;
     }
 
-    const auto snapshot = simulator_->Statistics();
+    const auto snapshot = displayed == nullptr ? simulator_->Statistics() : *displayed;
     std::ostringstream output;
     output << "Accesses: " << snapshot.accesses << "\r\n"
            << "Reads: " << snapshot.reads << "\r\n"
@@ -380,13 +466,6 @@ void CB5CacheVisualizerDlg::RefreshStatistics() {
     SetDlgItemText(IDC_EDIT_RESULT, wideOutput);
 
     RefreshStatisticsCharts();
-}
-
-void CB5CacheVisualizerDlg::RecordStatisticsPoint() {
-    if (simulator_ == nullptr) {
-        return;
-    }
-    overallHitRateHistory_.push_back(simulator_->Statistics().OverallHitRate());
 }
 
 void CB5CacheVisualizerDlg::RefreshStatisticsCharts() const {
@@ -408,14 +487,14 @@ void CB5CacheVisualizerDlg::DrawOutcomeChart(CDC& dc, const CRect& bounds) const
     CRect title(bounds.left + 6, bounds.top + 3, bounds.right - 4, bounds.top + 21);
     dc.DrawText(L"Outcome Mix", &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
-    if (simulator_ == nullptr || simulator_->Statistics().accesses == 0) {
+    const auto snapshot = DisplayedStatistics();
+    if (snapshot.accesses == 0) {
         CRect empty(bounds.left + 6, bounds.top + 24, bounds.right - 6, bounds.bottom - 4);
         dc.SetTextColor(RGB(120, 120, 120));
         dc.DrawText(L"No accesses yet", &empty, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         return;
     }
 
-    const auto snapshot = simulator_->Statistics();
     const double rates[] = {snapshot.L1HitRate(), snapshot.L2HitRate(), snapshot.MissRate()};
     const wchar_t* labels[] = {L"L1", L"L2", L"Miss"};
     const int contentTop = title.bottom + 2;
@@ -452,7 +531,8 @@ void CB5CacheVisualizerDlg::DrawHitRateChart(CDC& dc, const CRect& bounds) const
     CRect title(bounds.left + 6, bounds.top + 3, bounds.right - 4, bounds.top + 21);
     dc.DrawText(L"Cumulative Hit Rate", &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
 
-    if (overallHitRateHistory_.empty()) {
+    const std::size_t pointCount = visualization_.CurrentPosition();
+    if (pointCount == 0) {
         CRect empty(bounds.left + 6, bounds.top + 24, bounds.right - 6, bounds.bottom - 4);
         dc.SetTextColor(RGB(120, 120, 120));
         dc.DrawText(L"No accesses yet", &empty, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -480,12 +560,12 @@ void CB5CacheVisualizerDlg::DrawHitRateChart(CDC& dc, const CRect& bounds) const
 
     CPen ratePen(PS_SOLID, 2, lineColor);
     dc.SelectObject(&ratePen);
-    const std::size_t pointCount = overallHitRateHistory_.size();
+    const auto& frames = visualization_.Frames();
     for (std::size_t index = 0; index < pointCount; ++index) {
         const double xFraction = pointCount == 1
             ? 1.0
             : static_cast<double>(index) / static_cast<double>(pointCount - 1);
-        const double rate = std::clamp(overallHitRateHistory_[index], 0.0, 1.0);
+        const double rate = std::clamp(frames[index].statistics.OverallHitRate(), 0.0, 1.0);
         const int x = plot.left + static_cast<int>(xFraction * static_cast<double>(plot.Width()) + 0.5);
         const int y = plot.bottom - static_cast<int>(rate * static_cast<double>(plot.Height()) + 0.5);
         if (index == 0) {
@@ -505,7 +585,9 @@ void CB5CacheVisualizerDlg::DrawHitRateChart(CDC& dc, const CRect& bounds) const
 }
 
 CB5CacheVisualizerDlg::LevelDisplayState CB5CacheVisualizerDlg::BuildLevelDisplayState(
-    const b5cache::CacheLevel& level,
+    const b5cacheui::CacheSetsSnapshot& sets,
+    const b5cache::CacheLevelConfig& config,
+    const b5cache::MemoryAccess& request,
     const b5cache::LevelAccessDetail& detail,
     const bool accessed) const {
     LevelDisplayState state;
@@ -514,7 +596,6 @@ CB5CacheVisualizerDlg::LevelDisplayState CB5CacheVisualizerDlg::BuildLevelDispla
         return state;
     }
 
-    const auto& sets = level.Sets();
     if (detail.setIndex >= sets.size() || detail.lineIndex >= sets[detail.setIndex].size()) {
         return state;
     }
@@ -528,8 +609,8 @@ CB5CacheVisualizerDlg::LevelDisplayState CB5CacheVisualizerDlg::BuildLevelDispla
     state.blockNumber = line.blockNumber;
     state.tag = line.tag;
     state.evictedBlock = detail.evictedBlock;
-    const auto blockSize = level.Config().blockSizeBytes;
-    state.offset = blockSize == 0 ? 0 : lastResult_.request.address % blockSize;
+    const auto blockSize = config.blockSizeBytes;
+    state.offset = blockSize == 0 ? 0 : request.address % blockSize;
     return state;
 }
 
@@ -545,7 +626,8 @@ void CB5CacheVisualizerDlg::DrawAddressBreakdown(CDC& dc, const CRect& bounds) c
     dc.SetBkMode(TRANSPARENT);
     dc.SetTextColor(RGB(45, 45, 45));
 
-    if (!hasLastResult_ || simulator_ == nullptr) {
+    const auto* frame = visualization_.Current();
+    if (frame == nullptr) {
         CRect title(bounds.left + 6, bounds.top + 4, bounds.right - 6, bounds.top + 23);
         dc.DrawText(L"Address Breakdown", &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
         CRect empty(bounds.left + 6, bounds.top + 25, bounds.right - 6, bounds.bottom - 5);
@@ -558,15 +640,25 @@ void CB5CacheVisualizerDlg::DrawAddressBreakdown(CDC& dc, const CRect& bounds) c
     CString requestText;
     requestText.Format(
         L"%s  Address 0x%llX",
-        lastResult_.request.isWrite ? L"WRITE" : L"READ",
-        static_cast<unsigned long long>(lastResult_.request.address));
+        frame->result.request.isWrite ? L"WRITE" : L"READ",
+        static_cast<unsigned long long>(frame->result.request.address));
     CRect title(bounds.left + 6, bounds.top + 3, bounds.right - 6, bounds.top + 22);
-    dc.SetTextColor(lastResult_.request.isWrite ? RGB(178, 92, 0) : RGB(35, 93, 170));
+    dc.SetTextColor(frame->result.request.isWrite ? RGB(178, 92, 0) : RGB(35, 93, 170));
     dc.DrawText(requestText, &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
 
-    const auto l1State = BuildLevelDisplayState(simulator_->L1(), lastResult_.l1, true);
-    const bool l2Accessed = lastResult_.outcome != b5cache::AccessOutcome::L1Hit;
-    const auto l2State = BuildLevelDisplayState(simulator_->L2(), lastResult_.l2, l2Accessed);
+    const auto l1State = BuildLevelDisplayState(
+        frame->l1Sets,
+        frame->l1Config,
+        frame->result.request,
+        frame->result.l1,
+        true);
+    const bool l2Accessed = frame->result.outcome != b5cache::AccessOutcome::L1Hit;
+    const auto l2State = BuildLevelDisplayState(
+        frame->l2Sets,
+        frame->l2Config,
+        frame->result.request,
+        frame->result.l2,
+        l2Accessed);
     const int rowTop = title.bottom + 1;
     const int rowHeight = static_cast<int>((bounds.bottom - rowTop - 3) / 2);
 
@@ -634,12 +726,13 @@ void CB5CacheVisualizerDlg::DrawAccessPath(CDC& dc, const CRect& bounds) const {
     dc.SetBkMode(TRANSPARENT);
     CRect title(bounds.left + 5, bounds.top + 2, bounds.right - 5, bounds.top + 18);
 
+    const auto* frame = visualization_.Current();
     CString requestText = L"Access Path";
-    if (hasLastResult_) {
+    if (frame != nullptr) {
         requestText.Format(
             L"Access Path  %s 0x%llX",
-            lastResult_.request.isWrite ? L"W" : L"R",
-            static_cast<unsigned long long>(lastResult_.request.address));
+            frame->result.request.isWrite ? L"W" : L"R",
+            static_cast<unsigned long long>(frame->result.request.address));
     }
     dc.SetTextColor(RGB(45, 45, 45));
     dc.DrawText(requestText, &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
@@ -657,10 +750,10 @@ void CB5CacheVisualizerDlg::DrawAccessPath(CDC& dc, const CRect& bounds) const {
     }
 
     bool activeLinks[3] = {false, false, false};
-    if (hasLastResult_) {
+    if (frame != nullptr) {
         activeLinks[0] = true;
-        activeLinks[1] = lastResult_.outcome != b5cache::AccessOutcome::L1Hit;
-        activeLinks[2] = lastResult_.outcome == b5cache::AccessOutcome::MemoryMiss;
+        activeLinks[1] = frame->result.outcome != b5cache::AccessOutcome::L1Hit;
+        activeLinks[2] = frame->result.outcome == b5cache::AccessOutcome::MemoryMiss;
     }
     for (int index = 0; index < 3; ++index) {
         CPen arrowPen(PS_SOLID, activeLinks[index] ? 2 : 1,
@@ -682,9 +775,9 @@ void CB5CacheVisualizerDlg::DrawAccessPath(CDC& dc, const CRect& bounds) const {
         RGB(235, 237, 240),
         RGB(235, 237, 240)};
 
-    if (hasLastResult_) {
-        labels[0] = lastResult_.request.isWrite ? L"CPU Write" : L"CPU Read";
-        switch (lastResult_.outcome) {
+    if (frame != nullptr) {
+        labels[0] = frame->result.request.isWrite ? L"CPU Write" : L"CPU Read";
+        switch (frame->result.outcome) {
         case b5cache::AccessOutcome::L1Hit:
             labels[1] = L"L1 Hit";
             labels[2] = L"L2 Skip";
@@ -718,8 +811,8 @@ void CB5CacheVisualizerDlg::DrawAccessPath(CDC& dc, const CRect& bounds) const {
 
     CString action = L"Step or Run All to visualize one access.";
     COLORREF actionColor = RGB(110, 110, 110);
-    if (hasLastResult_) {
-        switch (lastResult_.outcome) {
+    if (frame != nullptr) {
+        switch (frame->result.outcome) {
         case b5cache::AccessOutcome::L1Hit:
             action = L"Finish in L1";
             actionColor = RGB(24, 120, 65);
@@ -733,11 +826,11 @@ void CB5CacheVisualizerDlg::DrawAccessPath(CDC& dc, const CRect& bounds) const {
             actionColor = RGB(35, 93, 170);
             break;
         }
-        if (lastResult_.l1.evicted || lastResult_.l2.evicted) {
+        if (frame->result.l1.evicted || frame->result.l2.evicted) {
             action += L" | Eviction";
             actionColor = RGB(170, 63, 37);
         }
-        if (lastResult_.request.isWrite) {
+        if (frame->result.request.isWrite) {
             action += L" | Dirty";
             actionColor = RGB(178, 92, 0);
         }
@@ -783,10 +876,106 @@ void CB5CacheVisualizerDlg::OnDrawItem(const int controlId, LPDRAWITEMSTRUCT dra
     dc.Detach();
 }
 
+b5cache::StatisticsSnapshot CB5CacheVisualizerDlg::DisplayedStatistics() const noexcept {
+    if (const auto* frame = visualization_.Current(); frame != nullptr) {
+        return frame->statistics;
+    }
+    return simulator_ == nullptr ? b5cache::StatisticsSnapshot{} : simulator_->Statistics();
+}
+
+void CB5CacheVisualizerDlg::StartPlaybackTimer() {
+    StopPlaybackTimer();
+    visualization_.Start();
+    playbackTimerId_ = SetTimer(
+        kPlaybackTimerId,
+        visualization_.TimerIntervalMs(),
+        nullptr);
+    if (playbackTimerId_ == 0) {
+        visualization_.Stop();
+        ShowUserError("Unable to start the playback timer.");
+    }
+    UpdateControlStates();
+}
+
+void CB5CacheVisualizerDlg::StopPlaybackTimer() {
+    if (playbackTimerId_ != 0 && GetSafeHwnd() != nullptr) {
+        KillTimer(playbackTimerId_);
+    }
+    playbackTimerId_ = 0;
+}
+
+void CB5CacheVisualizerDlg::FinishPlayback() {
+    StopPlaybackTimer();
+    visualization_.Stop();
+    RefreshTraceStatus();
+    UpdateControlStates();
+}
+
+void CB5CacheVisualizerDlg::UpdateControlStates() {
+    if (!initialized_ && GetSafeHwnd() == nullptr) {
+        return;
+    }
+
+    const auto state = visualization_.State();
+    const bool playing = state == b5cacheui::PlaybackState::Playing;
+    const bool paused = state == b5cacheui::PlaybackState::Paused;
+    const bool sessionLocked = playing || paused;
+
+    auto enable = [&](const int controlId, const bool enabled) {
+        if (CWnd* control = GetDlgItem(controlId); control != nullptr) {
+            control->EnableWindow(enabled ? TRUE : FALSE);
+        }
+    };
+
+    for (const int controlId : {
+             IDC_EDIT_L1_SIZE,
+             IDC_EDIT_L1_BLOCK,
+             IDC_EDIT_L1_ASSOC,
+             IDC_COMBO_L1_MAPPING,
+             IDC_COMBO_L1_REPLACEMENT,
+             IDC_EDIT_L2_SIZE,
+             IDC_EDIT_L2_BLOCK,
+             IDC_EDIT_L2_ASSOC,
+             IDC_COMBO_L2_MAPPING,
+             IDC_COMBO_L2_REPLACEMENT,
+             IDC_EDIT_TRACE,
+             IDC_BUTTON_IMPORT,
+             IDC_BUTTON_CLEAR_TRACE,
+             IDC_BUTTON_RUN}) {
+        enable(controlId, !sessionLocked);
+    }
+
+    bool editorHasText = false;
+    if (CWnd* editor = GetDlgItem(IDC_EDIT_TRACE); editor != nullptr) {
+        editorHasText = editor->GetWindowTextLength() > 0;
+    }
+    const bool hasPotentialTrace = !trace_.empty() || (traceDirty_ && editorHasText);
+    const bool canAdvance = visualization_.HasRecordedNext() ||
+        visualization_.FrameCount() < trace_.size() ||
+        (traceDirty_ && editorHasText);
+    const bool playbackReady = !configurationDirty_ && hasPotentialTrace;
+
+    enable(IDC_BUTTON_PREVIOUS, !playing && visualization_.CanMovePrevious());
+    enable(IDC_BUTTON_STEP, !playing && playbackReady && canAdvance);
+    enable(IDC_BUTTON_RUN_ALL, !playing && playbackReady && canAdvance);
+    enable(IDC_BUTTON_AUTOPLAY, !playing && playbackReady && canAdvance);
+    enable(IDC_BUTTON_PAUSE, playing);
+    enable(IDC_BUTTON_STOP, playing || paused);
+    enable(IDC_BUTTON_RESET, true);
+    enable(IDC_COMBO_PLAYBACK_SPEED, true);
+    enable(IDC_BUTTON_GENERATE_TRACE, !sessionLocked);
+}
+
 void CB5CacheVisualizerDlg::RefreshTraceStatus() {
     const auto total = trace_.size();
     CString summary;
-    summary.Format(L"Current: %llu / %llu", static_cast<unsigned long long>(nextIndex_), static_cast<unsigned long long>(total));
+    summary.Format(
+        L"%s F%llu/%llu D%llu/%llu",
+        PlaybackStateText(visualization_.State()),
+        static_cast<unsigned long long>(visualization_.CurrentPosition()),
+        static_cast<unsigned long long>(visualization_.FrameCount()),
+        static_cast<unsigned long long>(visualization_.FrameCount()),
+        static_cast<unsigned long long>(total));
     SetDlgItemText(IDC_STATIC_TRACE_INDEX, summary);
 }
 
@@ -888,6 +1077,7 @@ void CB5CacheVisualizerDlg::OnCustomDrawCacheView(NMHDR* notification, LRESULT* 
 }
 
 void CB5CacheVisualizerDlg::OnApplyConfig() {
+    StopPlaybackTimer();
     b5cache::SimulationConfig config;
     if (!ReadConfiguration(config)) {
         return;
@@ -901,6 +1091,8 @@ void CB5CacheVisualizerDlg::OnApplyConfig() {
         auto newSimulator = std::make_unique<b5cache::CacheSimulator>(config);
         simulator_ = std::move(newSimulator);
         trace_ = std::move(parsedTrace);
+        traceDirty_ = false;
+        configurationDirty_ = false;
         ResetSession();
     } catch (const std::exception& error) {
         ShowUserError(error.what());
@@ -908,6 +1100,7 @@ void CB5CacheVisualizerDlg::OnApplyConfig() {
 }
 
 void CB5CacheVisualizerDlg::OnImportTrace() {
+    StopPlaybackTimer();
     CFileDialog fileDialog(TRUE, L"txt", nullptr, OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST, L"Text Files (*.txt;*.trace)|*.txt;*.trace||");
     if (fileDialog.DoModal() != IDOK) {
         return;
@@ -920,23 +1113,35 @@ void CB5CacheVisualizerDlg::OnImportTrace() {
         for (const auto& access : importedTrace) {
             traceText << ToText(access) << L"\r\n";
         }
+        suppressTraceChange_ = true;
         SetDlgItemText(IDC_EDIT_TRACE, traceText.str().c_str());
+        suppressTraceChange_ = false;
         trace_ = importedTrace;
+        traceDirty_ = false;
         ResetSession();
     } catch (const std::exception& error) {
+        suppressTraceChange_ = false;
         ShowUserError(error.what());
     }
 }
 
 void CB5CacheVisualizerDlg::OnClearTrace() {
+    StopPlaybackTimer();
+    suppressTraceChange_ = true;
     SetDlgItemText(IDC_EDIT_TRACE, L"");
+    suppressTraceChange_ = false;
     trace_.clear();
+    traceDirty_ = false;
     ResetSession();
 }
 
 void CB5CacheVisualizerDlg::OnStepTrace() {
     if (simulator_ == nullptr) {
         ShowUserError("No simulator is available.");
+        return;
+    }
+    if (configurationDirty_) {
+        ShowUserError("Apply the changed configuration before playback.");
         return;
     }
 
@@ -955,6 +1160,10 @@ void CB5CacheVisualizerDlg::OnRunAllTrace() {
         ShowUserError("No simulator is available.");
         return;
     }
+    if (configurationDirty_) {
+        ShowUserError("Apply the changed configuration before running the trace.");
+        return;
+    }
 
     try {
         if (!LoadTraceFromEditor(trace_)) {
@@ -966,25 +1175,21 @@ void CB5CacheVisualizerDlg::OnRunAllTrace() {
             return;
         }
 
-        while (nextIndex_ < trace_.size()) {
-            lastResult_ = simulator_->Access(trace_[nextIndex_]);
-            hasLastResult_ = true;
-            ++nextIndex_;
-            RecordStatisticsPoint();
-            RefreshCacheViews(&lastResult_);
-            RefreshStatistics();
+        visualization_.MoveToLatest();
+        while (visualization_.FrameCount() < trace_.size()) {
+            const auto nextIndex = visualization_.FrameCount();
+            const auto result = simulator_->Access(trace_[nextIndex]);
+            visualization_.Append(CaptureFrame(result));
         }
-
-        RefreshTraceStatus();
-        if (hasLastResult_) {
-            RefreshLastResult(&lastResult_);
-        }
+        visualization_.Stop();
+        RefreshCurrentFrame();
     } catch (const std::exception& error) {
         ShowUserError(error.what());
     }
 }
 
 void CB5CacheVisualizerDlg::OnResetSimulation() {
+    StopPlaybackTimer();
     try {
         if (!LoadTraceFromEditor(trace_)) {
             return;
@@ -993,4 +1198,148 @@ void CB5CacheVisualizerDlg::OnResetSimulation() {
     } catch (const std::exception& error) {
         ShowUserError(error.what());
     }
+}
+
+void CB5CacheVisualizerDlg::OnPreviousFrame() {
+    StopPlaybackTimer();
+    if (visualization_.MovePrevious()) {
+        RefreshCurrentFrame();
+    }
+}
+
+void CB5CacheVisualizerDlg::OnAutoPlay() {
+    if (simulator_ == nullptr) {
+        ShowUserError("No simulator is available.");
+        return;
+    }
+    if (configurationDirty_) {
+        ShowUserError("Apply the changed configuration before playback.");
+        return;
+    }
+
+    try {
+        if (!LoadTraceFromEditor(trace_)) {
+            return;
+        }
+        if (trace_.empty()) {
+            ShowUserError("Trace is empty. Add at least one access before playback.");
+            return;
+        }
+        if (!CanAdvancePlayback()) {
+            ShowUserError("The trace has already been fully played.");
+            return;
+        }
+        StartPlaybackTimer();
+    } catch (const std::exception& error) {
+        FinishPlayback();
+        ShowUserError(error.what());
+    }
+}
+
+void CB5CacheVisualizerDlg::OnPausePlayback() {
+    if (visualization_.State() != b5cacheui::PlaybackState::Playing) {
+        return;
+    }
+    StopPlaybackTimer();
+    visualization_.Pause();
+    RefreshTraceStatus();
+    UpdateControlStates();
+}
+
+void CB5CacheVisualizerDlg::OnStopPlayback() {
+    FinishPlayback();
+}
+
+void CB5CacheVisualizerDlg::OnPlaybackSpeedChanged() {
+    const auto* speed = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_PLAYBACK_SPEED));
+    const int selection = speed == nullptr ? 1 : speed->GetCurSel();
+    switch (selection) {
+    case 0:
+        visualization_.SetSpeed(b5cacheui::PlaybackSpeed::Slow);
+        break;
+    case 2:
+        visualization_.SetSpeed(b5cacheui::PlaybackSpeed::Fast);
+        break;
+    case 1:
+    default:
+        visualization_.SetSpeed(b5cacheui::PlaybackSpeed::Normal);
+        break;
+    }
+
+    if (visualization_.State() == b5cacheui::PlaybackState::Playing) {
+        StartPlaybackTimer();
+    }
+}
+
+void CB5CacheVisualizerDlg::OnGenerateTrace() {
+    CTraceGeneratorDlg dialog(this);
+    if (dialog.DoModal() != IDOK) {
+        return;
+    }
+
+    try {
+        const auto& generated = dialog.GeneratedTrace();
+        const auto text = b5cache::TraceGenerator::FormatText(generated);
+        const CA2W wideText(text.c_str(), CP_UTF8);
+
+        StopPlaybackTimer();
+        suppressTraceChange_ = true;
+        SetDlgItemText(IDC_EDIT_TRACE, wideText);
+        suppressTraceChange_ = false;
+        trace_ = generated;
+        traceDirty_ = false;
+        ResetSession();
+
+        CString message;
+        message.Format(L"Generated and loaded %llu accesses.",
+                       static_cast<unsigned long long>(trace_.size()));
+        SetDlgItemText(IDC_STATIC_LAST_RESULT, message);
+        UpdateControlStates();
+    } catch (const std::exception& error) {
+        suppressTraceChange_ = false;
+        ShowUserError(error.what());
+    }
+}
+
+void CB5CacheVisualizerDlg::OnTraceTextChanged() {
+    if (!initialized_ || suppressTraceChange_) {
+        return;
+    }
+
+    StopPlaybackTimer();
+    trace_.clear();
+    traceDirty_ = true;
+    ResetSession();
+}
+
+void CB5CacheVisualizerDlg::OnConfigurationChanged() {
+    if (!initialized_ || suppressConfigurationChange_) {
+        return;
+    }
+
+    StopPlaybackTimer();
+    configurationDirty_ = true;
+    ResetSession();
+    SetDlgItemText(IDC_STATIC_LAST_RESULT, L"Configuration changed - click Apply Config.");
+}
+
+void CB5CacheVisualizerDlg::OnTimer(const UINT_PTR timerId) {
+    if (timerId != kPlaybackTimerId || timerId != playbackTimerId_) {
+        CDialogEx::OnTimer(timerId);
+        return;
+    }
+
+    try {
+        if (!ExecuteNextAccess(false) || !CanAdvancePlayback()) {
+            FinishPlayback();
+        }
+    } catch (const std::exception& error) {
+        FinishPlayback();
+        ShowUserError(error.what());
+    }
+}
+
+void CB5CacheVisualizerDlg::OnDestroy() {
+    StopPlaybackTimer();
+    CDialogEx::OnDestroy();
 }
