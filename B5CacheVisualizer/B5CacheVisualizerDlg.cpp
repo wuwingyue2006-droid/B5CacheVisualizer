@@ -131,12 +131,12 @@ BOOL CB5CacheVisualizerDlg::OnInitDialog() {
 
     SetDlgItemText(
         IDC_EDIT_TRACE,
-        L"# R/W + decimal or hexadecimal address\r\n"
+        L"# Miss -> L1 Hit -> L2 Hit -> Dirty/Eviction\r\n"
         L"R 0x00\r\n"
-        L"R 0x10\r\n"
-        L"W 0x20\r\n"
-        L"R 0x10\r\n"
-        L"R 0x40");
+        L"R 0x00\r\n"
+        L"R 0x40\r\n"
+        L"R 0x00\r\n"
+        L"W 0x80");
 
     simulator_ = std::make_unique<b5cache::CacheSimulator>(b5cache::CacheSimulator::DefaultConfig());
     try {
@@ -149,6 +149,7 @@ BOOL CB5CacheVisualizerDlg::OnInitDialog() {
 
     RefreshStatistics();
     RefreshCacheViews();
+    RefreshAccessVisuals();
     return TRUE;
 }
 
@@ -275,7 +276,7 @@ void CB5CacheVisualizerDlg::ResetSession() {
     RefreshTraceStatus();
     RefreshStatistics();
     RefreshCacheViews();
-    SetDlgItemText(IDC_STATIC_LAST_RESULT, L"Last Result: none");
+    RefreshLastResult(nullptr);
 }
 
 void CB5CacheVisualizerDlg::ExecuteNextAccess() {
@@ -358,7 +359,6 @@ void CB5CacheVisualizerDlg::RefreshCacheViews(const b5cache::AccessResult* lates
 void CB5CacheVisualizerDlg::RefreshStatistics() {
     if (simulator_ == nullptr) {
         SetDlgItemText(IDC_EDIT_RESULT, L"No simulator available.");
-        SetDlgItemText(IDC_STATIC_SUMMARY, L"Current requests: 0");
         RefreshStatisticsCharts();
         return;
     }
@@ -379,9 +379,6 @@ void CB5CacheVisualizerDlg::RefreshStatistics() {
     const CA2W wideOutput(output.str().c_str(), CP_UTF8);
     SetDlgItemText(IDC_EDIT_RESULT, wideOutput);
 
-    CString summary;
-    summary.Format(L"Current requests: %llu", static_cast<unsigned long long>(snapshot.accesses));
-    SetDlgItemText(IDC_STATIC_SUMMARY, summary);
     RefreshStatisticsCharts();
 }
 
@@ -507,8 +504,254 @@ void CB5CacheVisualizerDlg::DrawHitRateChart(CDC& dc, const CRect& bounds) const
     dc.DrawText(sampleLabel, &xLabel, DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
 }
 
+CB5CacheVisualizerDlg::LevelDisplayState CB5CacheVisualizerDlg::BuildLevelDisplayState(
+    const b5cache::CacheLevel& level,
+    const b5cache::LevelAccessDetail& detail,
+    const bool accessed) const {
+    LevelDisplayState state;
+    state.accessed = accessed;
+    if (!accessed || detail.lineIndex == b5cache::kInvalidIndex) {
+        return state;
+    }
+
+    const auto& sets = level.Sets();
+    if (detail.setIndex >= sets.size() || detail.lineIndex >= sets[detail.setIndex].size()) {
+        return state;
+    }
+
+    const auto& line = sets[detail.setIndex][detail.lineIndex];
+    state.hit = detail.hit;
+    state.dirty = line.dirty;
+    state.evicted = detail.evicted;
+    state.setIndex = detail.setIndex;
+    state.lineIndex = detail.lineIndex;
+    state.blockNumber = line.blockNumber;
+    state.tag = line.tag;
+    state.evictedBlock = detail.evictedBlock;
+    const auto blockSize = level.Config().blockSizeBytes;
+    state.offset = blockSize == 0 ? 0 : lastResult_.request.address % blockSize;
+    return state;
+}
+
+void CB5CacheVisualizerDlg::RefreshAccessVisuals() const {
+    for (const int controlId : {IDC_STATIC_ADDRESS_VIEW, IDC_STATIC_ACCESS_PATH}) {
+        if (CWnd* panel = GetDlgItem(controlId); panel != nullptr) {
+            panel->Invalidate(FALSE);
+        }
+    }
+}
+
+void CB5CacheVisualizerDlg::DrawAddressBreakdown(CDC& dc, const CRect& bounds) const {
+    dc.SetBkMode(TRANSPARENT);
+    dc.SetTextColor(RGB(45, 45, 45));
+
+    if (!hasLastResult_ || simulator_ == nullptr) {
+        CRect title(bounds.left + 6, bounds.top + 4, bounds.right - 6, bounds.top + 23);
+        dc.DrawText(L"Address Breakdown", &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+        CRect empty(bounds.left + 6, bounds.top + 25, bounds.right - 6, bounds.bottom - 5);
+        dc.SetTextColor(RGB(120, 120, 120));
+        dc.DrawText(L"Step or Run All to inspect Tag / Set / Offset", &empty,
+                    DT_CENTER | DT_WORDBREAK | DT_VCENTER);
+        return;
+    }
+
+    CString requestText;
+    requestText.Format(
+        L"%s  Address 0x%llX",
+        lastResult_.request.isWrite ? L"WRITE" : L"READ",
+        static_cast<unsigned long long>(lastResult_.request.address));
+    CRect title(bounds.left + 6, bounds.top + 3, bounds.right - 6, bounds.top + 22);
+    dc.SetTextColor(lastResult_.request.isWrite ? RGB(178, 92, 0) : RGB(35, 93, 170));
+    dc.DrawText(requestText, &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+    const auto l1State = BuildLevelDisplayState(simulator_->L1(), lastResult_.l1, true);
+    const bool l2Accessed = lastResult_.outcome != b5cache::AccessOutcome::L1Hit;
+    const auto l2State = BuildLevelDisplayState(simulator_->L2(), lastResult_.l2, l2Accessed);
+    const int rowTop = title.bottom + 1;
+    const int rowHeight = static_cast<int>((bounds.bottom - rowTop - 3) / 2);
+
+    auto drawLevel = [&](const wchar_t* levelName, const LevelDisplayState& state, const int top) {
+        CRect summaryRect(bounds.left + 6, top, bounds.right - 6, top + 19);
+        if (!state.accessed) {
+            CString skipped;
+            skipped.Format(L"%s  Not accessed (L1 hit)", levelName);
+            dc.SetTextColor(RGB(125, 125, 125));
+            dc.DrawText(skipped, &summaryRect, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+            CRect skippedBar(bounds.left + 6, top + 21, bounds.right - 6, top + rowHeight - 3);
+            dc.FillSolidRect(skippedBar, RGB(235, 237, 240));
+            return;
+        }
+
+        CString summary;
+        summary.Format(
+            L"%s  Block %llu | Line %llu | %s",
+            levelName,
+            static_cast<unsigned long long>(state.blockNumber),
+            static_cast<unsigned long long>(state.lineIndex),
+            state.hit ? L"Hit" : L"Fill");
+        if (state.evicted) {
+            CString eviction;
+            eviction.Format(L" | Evict B%llu", static_cast<unsigned long long>(state.evictedBlock));
+            summary += eviction;
+        }
+        if (state.dirty) {
+            summary += L" | Dirty";
+        }
+        dc.SetTextColor(state.evicted ? RGB(170, 63, 37)
+                                     : (state.hit ? RGB(24, 120, 65) : RGB(35, 93, 170)));
+        dc.DrawText(summary, &summaryRect,
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+
+        const COLORREF fills[] = {
+            RGB(235, 225, 250),
+            RGB(220, 237, 255),
+            RGB(255, 237, 208)};
+        CString values[3];
+        values[0].Format(L"Tag %llu", static_cast<unsigned long long>(state.tag));
+        values[1].Format(L"Set %llu", static_cast<unsigned long long>(state.setIndex));
+        values[2].Format(L"Offset %llu", static_cast<unsigned long long>(state.offset));
+        const int left = bounds.left + 6;
+        const int width = static_cast<int>(bounds.right - bounds.left - 12);
+        const int segmentWidth = width / 3;
+        for (int index = 0; index < 3; ++index) {
+            CRect segment(
+                left + index * segmentWidth,
+                top + 21,
+                index == 2 ? bounds.right - 6 : left + (index + 1) * segmentWidth - 2,
+                top + rowHeight - 3);
+            dc.FillSolidRect(segment, fills[index]);
+            dc.Draw3dRect(segment, RGB(185, 190, 198), RGB(185, 190, 198));
+            dc.SetTextColor(RGB(55, 55, 55));
+            dc.DrawText(values[index], &segment, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        }
+    };
+
+    drawLevel(L"L1", l1State, rowTop);
+    drawLevel(L"L2", l2State, rowTop + rowHeight);
+}
+
+void CB5CacheVisualizerDlg::DrawAccessPath(CDC& dc, const CRect& bounds) const {
+    dc.SetBkMode(TRANSPARENT);
+    CRect title(bounds.left + 5, bounds.top + 2, bounds.right - 5, bounds.top + 18);
+
+    CString requestText = L"Access Path";
+    if (hasLastResult_) {
+        requestText.Format(
+            L"Access Path  %s 0x%llX",
+            lastResult_.request.isWrite ? L"W" : L"R",
+            static_cast<unsigned long long>(lastResult_.request.address));
+    }
+    dc.SetTextColor(RGB(45, 45, 45));
+    dc.DrawText(requestText, &title, DT_LEFT | DT_SINGLELINE | DT_VCENTER);
+
+    const int margin = 5;
+    const int gap = 7;
+    const int availableWidth = static_cast<int>(bounds.Width()) - margin * 2 - gap * 3;
+    const int nodeWidth = availableWidth / 4;
+    const int nodeTop = title.bottom + 1;
+    const int nodeBottom = (std::min)(nodeTop + 23, static_cast<int>(bounds.bottom - 17));
+    CRect nodes[4];
+    for (int index = 0; index < 4; ++index) {
+        const int left = bounds.left + margin + index * (nodeWidth + gap);
+        nodes[index] = CRect(left, nodeTop, left + nodeWidth, nodeBottom);
+    }
+
+    bool activeLinks[3] = {false, false, false};
+    if (hasLastResult_) {
+        activeLinks[0] = true;
+        activeLinks[1] = lastResult_.outcome != b5cache::AccessOutcome::L1Hit;
+        activeLinks[2] = lastResult_.outcome == b5cache::AccessOutcome::MemoryMiss;
+    }
+    for (int index = 0; index < 3; ++index) {
+        CPen arrowPen(PS_SOLID, activeLinks[index] ? 2 : 1,
+                      activeLinks[index] ? RGB(65, 125, 220) : RGB(180, 184, 190));
+        CPen* oldPen = dc.SelectObject(&arrowPen);
+        const int y = (nodes[index].top + nodes[index].bottom) / 2;
+        dc.MoveTo(nodes[index].right + 1, y);
+        dc.LineTo(nodes[index + 1].left - 1, y);
+        dc.MoveTo(nodes[index + 1].left - 5, y - 3);
+        dc.LineTo(nodes[index + 1].left - 1, y);
+        dc.LineTo(nodes[index + 1].left - 5, y + 3);
+        dc.SelectObject(oldPen);
+    }
+
+    CString labels[4] = {L"CPU", L"L1 Ready", L"L2 Ready", L"Memory"};
+    COLORREF fills[4] = {
+        RGB(225, 238, 255),
+        RGB(235, 237, 240),
+        RGB(235, 237, 240),
+        RGB(235, 237, 240)};
+
+    if (hasLastResult_) {
+        labels[0] = lastResult_.request.isWrite ? L"CPU Write" : L"CPU Read";
+        switch (lastResult_.outcome) {
+        case b5cache::AccessOutcome::L1Hit:
+            labels[1] = L"L1 Hit";
+            labels[2] = L"L2 Skip";
+            labels[3] = L"Mem Skip";
+            fills[1] = RGB(216, 244, 225);
+            break;
+        case b5cache::AccessOutcome::L2Hit:
+            labels[1] = L"L1 Miss";
+            labels[2] = L"L2 Hit";
+            labels[3] = L"Mem Skip";
+            fills[1] = RGB(255, 226, 220);
+            fills[2] = RGB(216, 244, 225);
+            break;
+        case b5cache::AccessOutcome::MemoryMiss:
+            labels[1] = L"L1 Miss";
+            labels[2] = L"L2 Miss";
+            labels[3] = L"Mem Fetch";
+            fills[1] = RGB(255, 226, 220);
+            fills[2] = RGB(255, 226, 220);
+            fills[3] = RGB(220, 237, 255);
+            break;
+        }
+    }
+
+    for (int index = 0; index < 4; ++index) {
+        dc.FillSolidRect(nodes[index], fills[index]);
+        dc.Draw3dRect(nodes[index], RGB(155, 160, 168), RGB(155, 160, 168));
+        dc.SetTextColor(RGB(45, 45, 45));
+        dc.DrawText(labels[index], &nodes[index], DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+    }
+
+    CString action = L"Step or Run All to visualize one access.";
+    COLORREF actionColor = RGB(110, 110, 110);
+    if (hasLastResult_) {
+        switch (lastResult_.outcome) {
+        case b5cache::AccessOutcome::L1Hit:
+            action = L"Finish in L1";
+            actionColor = RGB(24, 120, 65);
+            break;
+        case b5cache::AccessOutcome::L2Hit:
+            action = L"L2 -> Fill L1";
+            actionColor = RGB(35, 93, 170);
+            break;
+        case b5cache::AccessOutcome::MemoryMiss:
+            action = L"Memory -> Fill L2 -> Fill L1";
+            actionColor = RGB(35, 93, 170);
+            break;
+        }
+        if (lastResult_.l1.evicted || lastResult_.l2.evicted) {
+            action += L" | Eviction";
+            actionColor = RGB(170, 63, 37);
+        }
+        if (lastResult_.request.isWrite) {
+            action += L" | Dirty";
+            actionColor = RGB(178, 92, 0);
+        }
+    }
+    CRect actionRect(bounds.left + 5, nodeBottom + 1, bounds.right - 5, bounds.bottom - 1);
+    dc.SetTextColor(actionColor);
+    dc.DrawText(action, &actionRect, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+}
+
 void CB5CacheVisualizerDlg::OnDrawItem(const int controlId, LPDRAWITEMSTRUCT drawItem) {
-    if (controlId != IDC_STATIC_OUTCOME_CHART && controlId != IDC_STATIC_RATE_CHART) {
+    if (controlId != IDC_STATIC_OUTCOME_CHART &&
+        controlId != IDC_STATIC_RATE_CHART &&
+        controlId != IDC_STATIC_ADDRESS_VIEW &&
+        controlId != IDC_STATIC_ACCESS_PATH) {
         CDialogEx::OnDrawItem(controlId, drawItem);
         return;
     }
@@ -526,8 +769,12 @@ void CB5CacheVisualizerDlg::OnDrawItem(const int controlId, LPDRAWITEMSTRUCT dra
 
     if (controlId == IDC_STATIC_OUTCOME_CHART) {
         DrawOutcomeChart(dc, bounds);
-    } else {
+    } else if (controlId == IDC_STATIC_RATE_CHART) {
         DrawHitRateChart(dc, bounds);
+    } else if (controlId == IDC_STATIC_ADDRESS_VIEW) {
+        DrawAddressBreakdown(dc, bounds);
+    } else {
+        DrawAccessPath(dc, bounds);
     }
 
     if (oldFont != nullptr) {
@@ -545,44 +792,47 @@ void CB5CacheVisualizerDlg::RefreshTraceStatus() {
 
 void CB5CacheVisualizerDlg::RefreshLastResult(const b5cache::AccessResult* result) {
     if (result == nullptr) {
-        SetDlgItemText(IDC_STATIC_LAST_RESULT, L"Last Result: none");
+        SetDlgItemText(IDC_STATIC_LAST_RESULT, L"Last: none");
+        SetDlgItemText(IDC_STATIC_ACCESS_PATH, L"Access Path: no request");
+        SetDlgItemText(IDC_STATIC_ADDRESS_VIEW, L"Address Breakdown: no request");
+        RefreshAccessVisuals();
         return;
     }
 
     std::wstringstream summary;
     switch (result->outcome) {
     case b5cache::AccessOutcome::L1Hit:
-        summary << L"Last Result: L1 Hit | L1 set " << result->l1.setIndex;
-        if (result->l1.lineIndex != b5cache::kInvalidIndex) {
-            summary << L" line " << result->l1.lineIndex;
-        }
-        summary << L" | L2 Not Accessed";
+        summary << L"Last: L1 Hit | L2 skipped";
         break;
     case b5cache::AccessOutcome::L2Hit:
-        summary << L"Last Result: L1 Miss | L2 Hit (set " << result->l2.setIndex;
-        if (result->l2.lineIndex != b5cache::kInvalidIndex) {
-            summary << L" line " << result->l2.lineIndex;
-        }
-        summary << L") | L1 fill";
-        if (result->l1.lineIndex != b5cache::kInvalidIndex) {
-            summary << L" set " << result->l1.setIndex << L" line " << result->l1.lineIndex;
-        }
+        summary << L"Last: L2 Hit | Fill L1";
         break;
     case b5cache::AccessOutcome::MemoryMiss:
-        summary << L"Last Result: L1/L2 Miss | L2 fill";
-        if (result->l2.lineIndex != b5cache::kInvalidIndex) {
-            summary << L" set " << result->l2.setIndex << L" line " << result->l2.lineIndex;
-        }
-        summary << L" | L1 fill";
-        if (result->l1.lineIndex != b5cache::kInvalidIndex) {
-            summary << L" set " << result->l1.setIndex << L" line " << result->l1.lineIndex;
-        }
+        summary << L"Last: Memory Miss | Fill L2 + L1";
         if (result->l1.evicted || result->l2.evicted) {
-            summary << L" | eviction";
+            summary << L" | Eviction";
         }
         break;
     }
+    if (result->request.isWrite) {
+        summary << L" | Dirty";
+    }
     SetDlgItemText(IDC_STATIC_LAST_RESULT, summary.str().c_str());
+
+    std::wstringstream accessiblePath;
+    accessiblePath << L"Access Path: " << OutcomeText(result->outcome);
+    if (result->outcome == b5cache::AccessOutcome::L2Hit) {
+        accessiblePath << L", fill L1";
+    } else if (result->outcome == b5cache::AccessOutcome::MemoryMiss) {
+        accessiblePath << L", memory fills L2 then L1";
+    }
+    SetDlgItemText(IDC_STATIC_ACCESS_PATH, accessiblePath.str().c_str());
+
+    std::wstringstream accessibleAddress;
+    accessibleAddress << L"Address Breakdown for 0x" << std::hex << std::uppercase
+                      << result->request.address;
+    SetDlgItemText(IDC_STATIC_ADDRESS_VIEW, accessibleAddress.str().c_str());
+    RefreshAccessVisuals();
 }
 
 void CB5CacheVisualizerDlg::ShowUserError(const std::string& message) const {

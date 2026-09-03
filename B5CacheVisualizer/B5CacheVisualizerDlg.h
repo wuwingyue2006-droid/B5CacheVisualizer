@@ -18,6 +18,19 @@ protected:
     DECLARE_MESSAGE_MAP()
 
 private:
+    struct LevelDisplayState {
+        bool accessed = false;
+        bool hit = false;
+        bool dirty = false;
+        bool evicted = false;
+        std::size_t setIndex = 0;
+        std::size_t lineIndex = b5cache::kInvalidIndex;
+        std::uint64_t blockNumber = 0;
+        std::uint64_t tag = 0;
+        std::uint64_t offset = 0;
+        std::uint64_t evictedBlock = 0;
+    };
+
     afx_msg void OnApplyConfig();
     afx_msg void OnImportTrace();
     afx_msg void OnClearTrace();
@@ -38,6 +51,13 @@ private:
     void RefreshStatisticsCharts() const;
     void DrawOutcomeChart(CDC& dc, const CRect& bounds) const;
     void DrawHitRateChart(CDC& dc, const CRect& bounds) const;
+    LevelDisplayState BuildLevelDisplayState(
+        const b5cache::CacheLevel& level,
+        const b5cache::LevelAccessDetail& detail,
+        bool accessed) const;
+    void RefreshAccessVisuals() const;
+    void DrawAddressBreakdown(CDC& dc, const CRect& bounds) const;
+    void DrawAccessPath(CDC& dc, const CRect& bounds) const;
     void RefreshTraceStatus();
     void ShowUserError(const std::string& message) const;
     void ClearCacheView(CListCtrl& view) const;
