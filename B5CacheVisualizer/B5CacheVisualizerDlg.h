@@ -43,6 +43,7 @@ private:
     afx_msg void OnPausePlayback();
     afx_msg void OnStopPlayback();
     afx_msg void OnPlaybackSpeedChanged();
+    afx_msg void OnGenerateTrace();
     afx_msg void OnTraceTextChanged();
     afx_msg void OnConfigurationChanged();
     afx_msg void OnTimer(UINT_PTR timerId);

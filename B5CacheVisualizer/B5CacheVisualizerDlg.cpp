@@ -2,7 +2,9 @@
 
 #include "B5CacheVisualizer.h"
 #include "B5CacheVisualizerDlg.h"
+#include "TraceGeneratorDlg.h"
 #include "trace/MemoryTraceParser.h"
+#include "trace/TraceGenerator.h"
 
 #include <atlconv.h>
 #include <algorithm>
@@ -10,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string>
 
@@ -92,6 +95,7 @@ BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BUTTON_AUTOPLAY, &CB5CacheVisualizerDlg::OnAutoPlay)
     ON_BN_CLICKED(IDC_BUTTON_PAUSE, &CB5CacheVisualizerDlg::OnPausePlayback)
     ON_BN_CLICKED(IDC_BUTTON_STOP, &CB5CacheVisualizerDlg::OnStopPlayback)
+    ON_BN_CLICKED(IDC_BUTTON_GENERATE_TRACE, &CB5CacheVisualizerDlg::OnGenerateTrace)
     ON_CBN_SELCHANGE(IDC_COMBO_PLAYBACK_SPEED, &CB5CacheVisualizerDlg::OnPlaybackSpeedChanged)
     ON_EN_CHANGE(IDC_EDIT_TRACE, &CB5CacheVisualizerDlg::OnTraceTextChanged)
     ON_EN_CHANGE(IDC_EDIT_L1_SIZE, &CB5CacheVisualizerDlg::OnConfigurationChanged)
@@ -170,7 +174,6 @@ BOOL CB5CacheVisualizerDlg::OnInitDialog() {
     SetDlgItemInt(IDC_EDIT_L2_SIZE, 128, FALSE);
     SetDlgItemInt(IDC_EDIT_L2_BLOCK, 16, FALSE);
     SetDlgItemInt(IDC_EDIT_L2_ASSOC, 1, FALSE);
-
     SetDlgItemText(
         IDC_EDIT_TRACE,
         L"# Miss -> L1 Hit -> L2 Hit -> Dirty/Eviction\r\n"
@@ -960,6 +963,7 @@ void CB5CacheVisualizerDlg::UpdateControlStates() {
     enable(IDC_BUTTON_STOP, playing || paused);
     enable(IDC_BUTTON_RESET, true);
     enable(IDC_COMBO_PLAYBACK_SPEED, true);
+    enable(IDC_BUTTON_GENERATE_TRACE, !sessionLocked);
 }
 
 void CB5CacheVisualizerDlg::RefreshTraceStatus() {
@@ -1264,6 +1268,36 @@ void CB5CacheVisualizerDlg::OnPlaybackSpeedChanged() {
 
     if (visualization_.State() == b5cacheui::PlaybackState::Playing) {
         StartPlaybackTimer();
+    }
+}
+
+void CB5CacheVisualizerDlg::OnGenerateTrace() {
+    CTraceGeneratorDlg dialog(this);
+    if (dialog.DoModal() != IDOK) {
+        return;
+    }
+
+    try {
+        const auto& generated = dialog.GeneratedTrace();
+        const auto text = b5cache::TraceGenerator::FormatText(generated);
+        const CA2W wideText(text.c_str(), CP_UTF8);
+
+        StopPlaybackTimer();
+        suppressTraceChange_ = true;
+        SetDlgItemText(IDC_EDIT_TRACE, wideText);
+        suppressTraceChange_ = false;
+        trace_ = generated;
+        traceDirty_ = false;
+        ResetSession();
+
+        CString message;
+        message.Format(L"Generated and loaded %llu accesses.",
+                       static_cast<unsigned long long>(trace_.size()));
+        SetDlgItemText(IDC_STATIC_LAST_RESULT, message);
+        UpdateControlStates();
+    } catch (const std::exception& error) {
+        suppressTraceChange_ = false;
+        ShowUserError(error.what());
     }
 }
 
