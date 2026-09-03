@@ -2,6 +2,7 @@
 
 #include "B5CacheVisualizer.h"
 #include "B5CacheVisualizerDlg.h"
+#include "TraceGeneratorDlg.h"
 #include "trace/MemoryTraceParser.h"
 #include "trace/TraceGenerator.h"
 
@@ -96,8 +97,6 @@ BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BUTTON_STOP, &CB5CacheVisualizerDlg::OnStopPlayback)
     ON_BN_CLICKED(IDC_BUTTON_GENERATE_TRACE, &CB5CacheVisualizerDlg::OnGenerateTrace)
     ON_CBN_SELCHANGE(IDC_COMBO_PLAYBACK_SPEED, &CB5CacheVisualizerDlg::OnPlaybackSpeedChanged)
-    ON_CBN_SELCHANGE(IDC_COMBO_GENERATOR_MODE, &CB5CacheVisualizerDlg::OnGeneratorModeChanged)
-    ON_CBN_SELCHANGE(IDC_COMBO_GENERATOR_PRESET, &CB5CacheVisualizerDlg::OnGeneratorPresetChanged)
     ON_EN_CHANGE(IDC_EDIT_TRACE, &CB5CacheVisualizerDlg::OnTraceTextChanged)
     ON_EN_CHANGE(IDC_EDIT_L1_SIZE, &CB5CacheVisualizerDlg::OnConfigurationChanged)
     ON_EN_CHANGE(IDC_EDIT_L1_BLOCK, &CB5CacheVisualizerDlg::OnConfigurationChanged)
@@ -169,43 +168,12 @@ BOOL CB5CacheVisualizerDlg::OnInitDialog() {
         playbackSpeed->SetCurSel(1);
     }
 
-    CComboBox* generatorMode = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_GENERATOR_MODE));
-    if (generatorMode != nullptr) {
-        generatorMode->AddString(L"Sequential");
-        generatorMode->AddString(L"Loop");
-        generatorMode->AddString(L"Random");
-        generatorMode->AddString(L"Hot Set");
-        generatorMode->AddString(L"Mixed R/W");
-        generatorMode->SetCurSel(0);
-    }
-
-    CComboBox* generatorPreset = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_GENERATOR_PRESET));
-    if (generatorPreset != nullptr) {
-        generatorPreset->AddString(L"Custom");
-        generatorPreset->AddString(L"Sequential locality");
-        generatorPreset->AddString(L"Loop working set");
-        generatorPreset->AddString(L"Hot access");
-        generatorPreset->AddString(L"Mixed reads/writes");
-        generatorPreset->SetCurSel(0);
-    }
-
     SetDlgItemInt(IDC_EDIT_L1_SIZE, 64, FALSE);
     SetDlgItemInt(IDC_EDIT_L1_BLOCK, 16, FALSE);
     SetDlgItemInt(IDC_EDIT_L1_ASSOC, 1, FALSE);
     SetDlgItemInt(IDC_EDIT_L2_SIZE, 128, FALSE);
     SetDlgItemInt(IDC_EDIT_L2_BLOCK, 16, FALSE);
     SetDlgItemInt(IDC_EDIT_L2_ASSOC, 1, FALSE);
-    SetDlgItemText(IDC_EDIT_GENERATOR_COUNT, L"32");
-    SetDlgItemText(IDC_EDIT_GENERATOR_START, L"0x0");
-    SetDlgItemText(IDC_EDIT_GENERATOR_RANGE, L"512");
-    SetDlgItemText(IDC_EDIT_GENERATOR_STEP, L"16");
-    SetDlgItemText(IDC_EDIT_GENERATOR_LOOP, L"4");
-    SetDlgItemText(IDC_EDIT_GENERATOR_HOT_COUNT, L"2");
-    SetDlgItemText(IDC_EDIT_GENERATOR_HOT_PERCENT, L"80");
-    SetDlgItemText(IDC_EDIT_GENERATOR_WRITE_PERCENT, L"0");
-    SetDlgItemText(IDC_EDIT_GENERATOR_SEED, L"20260903");
-    UpdateGeneratorControlStates(false);
-
     SetDlgItemText(
         IDC_EDIT_TRACE,
         L"# Miss -> L1 Hit -> L2 Hit -> Dirty/Eviction\r\n"
@@ -307,83 +275,6 @@ bool CB5CacheVisualizerDlg::ReadConfiguration(b5cache::SimulationConfig& config)
     try {
         config.l1 = {"L1", l1Size, l1Block, l1Assoc, toMapping(l1MappingIndex), toReplacement(l1ReplacementIndex)};
         config.l2 = {"L2", l2Size, l2Block, l2Assoc, toMapping(l2MappingIndex), toReplacement(l2ReplacementIndex)};
-        return true;
-    } catch (const std::exception& error) {
-        ShowUserError(error.what());
-        return false;
-    }
-}
-
-bool CB5CacheVisualizerDlg::ReadTraceGenerationConfig(b5cache::TraceGenerationConfig& config) const {
-    auto readUnsigned = [&](const int controlId, const char* fieldName) -> std::uint64_t {
-        CString text;
-        GetDlgItemText(controlId, text);
-        const CString trimmed = text.Trim();
-        if (trimmed.IsEmpty() || trimmed[0] == L'+' || trimmed[0] == L'-') {
-            throw std::invalid_argument(std::string(fieldName) + " must be a non-negative integer.");
-        }
-
-        wchar_t* endPointer = nullptr;
-        errno = 0;
-        const auto parsed = std::wcstoull(trimmed.GetString(), &endPointer, 0);
-        if (errno != 0 || endPointer == trimmed.GetString() || *endPointer != L'\0') {
-            throw std::invalid_argument(std::string(fieldName) + " must be a valid decimal or 0x hexadecimal integer.");
-        }
-        return parsed;
-    };
-    auto readPercent = [&](const int controlId, const char* fieldName) -> double {
-        CString text;
-        GetDlgItemText(controlId, text);
-        const CString trimmed = text.Trim();
-        wchar_t* endPointer = nullptr;
-        errno = 0;
-        const auto parsed = std::wcstod(trimmed.GetString(), &endPointer);
-        if (trimmed.IsEmpty() || errno != 0 || endPointer == trimmed.GetString() || *endPointer != L'\0' ||
-            parsed < 0.0 || parsed > 100.0) {
-            throw std::invalid_argument(std::string(fieldName) + " must be a percentage between 0 and 100.");
-        }
-        return parsed / 100.0;
-    };
-
-    try {
-        const auto modeSelection = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_GENERATOR_MODE))->GetCurSel();
-        switch (modeSelection) {
-        case 0:
-            config.mode = b5cache::TraceGenerationMode::Sequential;
-            break;
-        case 1:
-            config.mode = b5cache::TraceGenerationMode::Loop;
-            break;
-        case 2:
-            config.mode = b5cache::TraceGenerationMode::Random;
-            break;
-        case 3:
-            config.mode = b5cache::TraceGenerationMode::HotSet;
-            break;
-        case 4:
-            config.mode = b5cache::TraceGenerationMode::MixedReadWrite;
-            break;
-        default:
-            throw std::invalid_argument("Select a trace generation mode.");
-        }
-
-        const auto count = readUnsigned(IDC_EDIT_GENERATOR_COUNT, "Request count");
-        const auto loopLength = readUnsigned(IDC_EDIT_GENERATOR_LOOP, "Loop length");
-        const auto hotSetSize = readUnsigned(IDC_EDIT_GENERATOR_HOT_COUNT, "Hot-set size");
-        if (count > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) ||
-            loopLength > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)()) ||
-            hotSetSize > static_cast<std::uint64_t>((std::numeric_limits<std::size_t>::max)())) {
-            throw std::invalid_argument("Count values are too large for this computer.");
-        }
-        config.requestCount = static_cast<std::size_t>(count);
-        config.startAddress = readUnsigned(IDC_EDIT_GENERATOR_START, "Start address");
-        config.addressRangeBytes = readUnsigned(IDC_EDIT_GENERATOR_RANGE, "Address range");
-        config.stepBytes = readUnsigned(IDC_EDIT_GENERATOR_STEP, "Step");
-        config.loopLength = static_cast<std::size_t>(loopLength);
-        config.hotSetSize = static_cast<std::size_t>(hotSetSize);
-        config.hotProbability = readPercent(IDC_EDIT_GENERATOR_HOT_PERCENT, "Hot-set probability");
-        config.writeProbability = readPercent(IDC_EDIT_GENERATOR_WRITE_PERCENT, "Write probability");
-        config.randomSeed = readUnsigned(IDC_EDIT_GENERATOR_SEED, "Random seed");
         return true;
     } catch (const std::exception& error) {
         ShowUserError(error.what());
@@ -1072,84 +963,7 @@ void CB5CacheVisualizerDlg::UpdateControlStates() {
     enable(IDC_BUTTON_STOP, playing || paused);
     enable(IDC_BUTTON_RESET, true);
     enable(IDC_COMBO_PLAYBACK_SPEED, true);
-    UpdateGeneratorControlStates(sessionLocked);
-}
-
-void CB5CacheVisualizerDlg::UpdateGeneratorControlStates(const bool sessionLocked) {
-    auto enable = [&](const int controlId, const bool enabled) {
-        if (CWnd* control = GetDlgItem(controlId); control != nullptr) {
-            control->EnableWindow(enabled ? TRUE : FALSE);
-        }
-    };
-
-    const auto* mode = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_GENERATOR_MODE));
-    const int selection = mode == nullptr ? 0 : mode->GetCurSel();
-    const bool available = !sessionLocked;
-    const bool loopMode = selection == 1;
-    const bool hotSetMode = selection == 3;
-    const bool seededMode = selection == 2 || hotSetMode || selection == 4;
-    const bool mixedMode = selection == 4;
-
-    enable(IDC_COMBO_GENERATOR_MODE, available);
-    enable(IDC_COMBO_GENERATOR_PRESET, available);
-    enable(IDC_EDIT_GENERATOR_COUNT, available);
-    enable(IDC_EDIT_GENERATOR_START, available);
-    enable(IDC_EDIT_GENERATOR_RANGE, available);
-    enable(IDC_EDIT_GENERATOR_STEP, available);
-    enable(IDC_EDIT_GENERATOR_LOOP, available && loopMode);
-    enable(IDC_EDIT_GENERATOR_HOT_COUNT, available && hotSetMode);
-    enable(IDC_EDIT_GENERATOR_HOT_PERCENT, available && hotSetMode);
-    enable(IDC_EDIT_GENERATOR_WRITE_PERCENT, available && mixedMode);
-    enable(IDC_EDIT_GENERATOR_SEED, available && seededMode);
-    enable(IDC_BUTTON_GENERATE_TRACE, available);
-}
-
-void CB5CacheVisualizerDlg::ApplyGeneratorPreset() {
-    auto* preset = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_GENERATOR_PRESET));
-    auto* mode = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_GENERATOR_MODE));
-    if (preset == nullptr || mode == nullptr || preset->GetCurSel() <= 0) {
-        UpdateGeneratorControlStates(false);
-        return;
-    }
-
-    auto setText = [&](const int controlId, const wchar_t* value) {
-        SetDlgItemText(controlId, value);
-    };
-    setText(IDC_EDIT_GENERATOR_START, L"0x0");
-    setText(IDC_EDIT_GENERATOR_STEP, L"16");
-    setText(IDC_EDIT_GENERATOR_LOOP, L"4");
-    setText(IDC_EDIT_GENERATOR_HOT_COUNT, L"2");
-    setText(IDC_EDIT_GENERATOR_HOT_PERCENT, L"80");
-    setText(IDC_EDIT_GENERATOR_WRITE_PERCENT, L"0");
-    setText(IDC_EDIT_GENERATOR_SEED, L"20260903");
-
-    switch (preset->GetCurSel()) {
-    case 1:
-        mode->SetCurSel(0);
-        setText(IDC_EDIT_GENERATOR_COUNT, L"32");
-        setText(IDC_EDIT_GENERATOR_RANGE, L"512");
-        break;
-    case 2:
-        mode->SetCurSel(1);
-        setText(IDC_EDIT_GENERATOR_COUNT, L"48");
-        setText(IDC_EDIT_GENERATOR_RANGE, L"64");
-        break;
-    case 3:
-        mode->SetCurSel(3);
-        setText(IDC_EDIT_GENERATOR_COUNT, L"64");
-        setText(IDC_EDIT_GENERATOR_RANGE, L"256");
-        setText(IDC_EDIT_GENERATOR_HOT_PERCENT, L"85");
-        break;
-    case 4:
-        mode->SetCurSel(4);
-        setText(IDC_EDIT_GENERATOR_COUNT, L"48");
-        setText(IDC_EDIT_GENERATOR_RANGE, L"128");
-        setText(IDC_EDIT_GENERATOR_WRITE_PERCENT, L"35");
-        break;
-    default:
-        break;
-    }
-    UpdateGeneratorControlStates(false);
+    enable(IDC_BUTTON_GENERATE_TRACE, !sessionLocked);
 }
 
 void CB5CacheVisualizerDlg::RefreshTraceStatus() {
@@ -1458,13 +1272,13 @@ void CB5CacheVisualizerDlg::OnPlaybackSpeedChanged() {
 }
 
 void CB5CacheVisualizerDlg::OnGenerateTrace() {
-    b5cache::TraceGenerationConfig config;
-    if (!ReadTraceGenerationConfig(config)) {
+    CTraceGeneratorDlg dialog(this);
+    if (dialog.DoModal() != IDOK) {
         return;
     }
 
     try {
-        const auto generated = b5cache::TraceGenerator::Generate(config);
+        const auto& generated = dialog.GeneratedTrace();
         const auto text = b5cache::TraceGenerator::FormatText(generated);
         const CA2W wideText(text.c_str(), CP_UTF8);
 
@@ -1485,17 +1299,6 @@ void CB5CacheVisualizerDlg::OnGenerateTrace() {
         suppressTraceChange_ = false;
         ShowUserError(error.what());
     }
-}
-
-void CB5CacheVisualizerDlg::OnGeneratorModeChanged() {
-    if (CComboBox* preset = static_cast<CComboBox*>(GetDlgItem(IDC_COMBO_GENERATOR_PRESET)); preset != nullptr) {
-        preset->SetCurSel(0);
-    }
-    UpdateGeneratorControlStates(false);
-}
-
-void CB5CacheVisualizerDlg::OnGeneratorPresetChanged() {
-    ApplyGeneratorPreset();
 }
 
 void CB5CacheVisualizerDlg::OnTraceTextChanged() {

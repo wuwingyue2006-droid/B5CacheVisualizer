@@ -137,7 +137,7 @@ std::string TraceGenerator::FormatText(const std::vector<MemoryAccess>& accesses
     std::ostringstream text;
     text << std::uppercase << std::hex;
     for (const auto& access : accesses) {
-        text << (access.isWrite ? 'W' : 'R') << " 0x" << access.address << '\n';
+        text << (access.isWrite ? 'W' : 'R') << " 0x" << access.address << "\r\n";
     }
     return text.str();
 }
