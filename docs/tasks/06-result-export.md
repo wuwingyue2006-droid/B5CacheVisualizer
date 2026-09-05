@@ -8,7 +8,7 @@
 主题：把单次模拟与策略对比结果导出为可复用实验材料
 前置：阶段 05 已合入 dev；开始编码前先把最新 origin/dev 合入本分支
 优先级：可选，时间不足时可以取消
-状态：待开发
+状态：已实现，待验收
 ```
 
 本阶段只负责把程序已经产生的数据整理为文件，不增加新的 Cache 模型。导出内容应便于写实验报告、使用 Excel 查看以及复现课堂演示。
@@ -104,3 +104,11 @@ docs/tasks/06-result-export.md
 ```text
 Add cache experiment result export
 ```
+
+## 实现记录（2026-09-05）
+
+- 新增 `src/export/ExperimentExporter.h/.cpp`：纯 C++、不依赖 MFC；接收只读的配置、Trace、逐条访问结果、最终统计和可选的对比结果。
+- CSV 与 TXT 均输出 UTF-8 并统一带 UTF-8 BOM（`EF BB BF`），保证 Windows Excel 和记事本正确识别编码；由 `ExperimentExporter::WriteUtf8File` 统一写入，写入失败抛出含路径原因的异常，不静默吞错。
+- 主界面新增"Export experiment..."按钮（`IDC_BUTTON_EXPORT`），仅在已执行至少一次访问后启用；对比窗口新增"Export results..."按钮（`IDC_BUTTON_COMPARE_EXPORT`），仅在运行对比后启用。保存对话框提供 `.csv` / `.txt` 过滤器与默认文件名，取消保存不视为错误。
+- 地址统一 `0x` 十六进制并保留十进制列；无效 line index 输出为空或 `N/A`；L1 Hit 时 L2 各列留空并在 TXT 中标注 `not accessed (L1 hit)`；仅在实际发生驱逐时输出被驱逐 block；所有 CSV 字段正确转义。
+- 新增 `B5CacheCoreTests/ExportTests.cpp`（6 个测试）并注册到 `TestSuites.h` / `TestMain.cpp`（这两个公共文件各加一行，与阶段 05 做法一致）。

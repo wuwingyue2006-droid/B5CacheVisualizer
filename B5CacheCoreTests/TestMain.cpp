@@ -11,6 +11,7 @@ int main() {
     b5cache::tests::AddStatisticsTests(tests);
     b5cache::tests::AddTraceTests(tests);
     b5cache::tests::AddComparisonTests(tests);
+    b5cache::tests::AddExportTests(tests);
 
     std::size_t passed = 0;
     for (const auto& [name, test] : tests) {
