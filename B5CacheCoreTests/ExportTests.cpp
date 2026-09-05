@@ -191,6 +191,39 @@ void TestComparisonExportRanksEveryPlan() {
             "The comparison TXT should report the shared trace size.");
 }
 
+void TestComparisonExportIncludesSharedTraceAndExecutedCount() {
+    ExperimentExportData data;
+    data.config.l1 = {"L1", 64, 16, 1, MappingKind::Direct, ReplacementKind::Fifo};
+    data.config.l2 = {"L2", 128, 16, 1, MappingKind::Direct, ReplacementKind::Fifo};
+    data.trace = {{0x00, false}, {0x80, true}, {0x40, false}};
+    data.exportTime = "2026-09-05 12:00:00";
+
+    const std::vector<ComparisonPlan> plans = {
+        {"Direct + FIFO", data.config},
+        {"2-way Set + LRU",
+            SimulationConfig{
+                {"L1", 64, 16, 2, MappingKind::SetAssociative, ReplacementKind::Lru},
+                {"L2", 128, 16, 2, MappingKind::SetAssociative, ReplacementKind::Lru}}},
+    };
+    data.comparisonPlans = plans;
+    data.comparisonResults = ComparisonRunner::Run(plans, data.trace);
+
+    const auto csv = ExperimentExporter::FormatComparisonCsv(data);
+    Require(csv.find("Executed accesses,3") != kNotFound &&
+                csv.find("Executed accesses,0") == kNotFound,
+            "Comparison CSV should report the accesses executed by each plan.");
+    Require(csv.find("[Trace]\r\n") != kNotFound &&
+                csv.find("1,W,0x80,128") != kNotFound,
+            "Comparison CSV should include the complete shared trace.");
+
+    const auto txt = ExperimentExporter::FormatComparisonTxt(data);
+    Require(txt.find("Executed accesses : 3") != kNotFound,
+            "Comparison TXT should report the accesses executed by each plan.");
+    Require(txt.find("[Trace]\r\n") != kNotFound &&
+                txt.find("0x80 (128)") != kNotFound,
+            "Comparison TXT should include the complete shared trace.");
+}
+
 void TestWriteUtf8FileUsesBomAndPropagatesErrors() {
     const auto directory = fs::temp_directory_path();
     const auto path = directory / (
@@ -235,6 +268,8 @@ void AddExportTests(TestList& tests) {
     tests.push_back({"Export: experiment TXT is human readable", TestExperimentTxtIsHumanReadable});
     tests.push_back({"Export: comparison CSV escaping", TestComparisonCsvEscapesSpecialCharacters});
     tests.push_back({"Export: comparison export ranks every plan", TestComparisonExportRanksEveryPlan});
+    tests.push_back({"Export: comparison export includes shared trace and executed count",
+                     TestComparisonExportIncludesSharedTraceAndExecutedCount});
     tests.push_back({"Export: UTF-8 BOM writing and error propagation", TestWriteUtf8FileUsesBomAndPropagatesErrors});
 }
 

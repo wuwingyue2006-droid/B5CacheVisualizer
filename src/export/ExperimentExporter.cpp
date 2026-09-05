@@ -82,6 +82,16 @@ std::size_t CountWrites(const std::vector<MemoryAccess>& trace) noexcept {
     return trace.size() - CountReads(trace);
 }
 
+std::uint64_t ExecutedAccessCount(const ExperimentExportData& data) noexcept {
+    if (!data.accessResults.empty()) {
+        return static_cast<std::uint64_t>(data.accessResults.size());
+    }
+    if (!data.comparisonResults.empty()) {
+        return data.comparisonResults.front().statistics.accesses;
+    }
+    return 0;
+}
+
 std::string LevelDetailText(const std::string& level, const LevelAccessDetail& detail, const bool accessed) {
     if (!accessed) {
         return level + ": not accessed (L1 hit)";
@@ -124,7 +134,7 @@ std::string TraceSummaryCsvRows(const ExperimentExportData& data) {
     rows += CsvRow({"Total accesses", std::to_string(data.trace.size())});
     rows += CsvRow({"Read accesses", std::to_string(CountReads(data.trace))});
     rows += CsvRow({"Write accesses", std::to_string(CountWrites(data.trace))});
-    rows += CsvRow({"Executed accesses", std::to_string(data.accessResults.size())});
+    rows += CsvRow({"Executed accesses", std::to_string(ExecutedAccessCount(data))});
     return rows;
 }
 
@@ -133,7 +143,29 @@ void AppendTraceSummaryTxt(std::string& text, const ExperimentExportData& data) 
     text += "  Total accesses    : " + std::to_string(data.trace.size()) + "\r\n";
     text += "  Read accesses     : " + std::to_string(CountReads(data.trace)) + "\r\n";
     text += "  Write accesses    : " + std::to_string(CountWrites(data.trace)) + "\r\n";
-    text += "  Executed accesses : " + std::to_string(data.accessResults.size()) + "\r\n";
+    text += "  Executed accesses : " + std::to_string(ExecutedAccessCount(data)) + "\r\n";
+}
+
+std::string TraceCsvRows(const std::vector<MemoryAccess>& trace) {
+    std::string rows;
+    rows += CsvRow({"Index", "Type", "Address (hex)", "Address (decimal)"});
+    for (std::size_t index = 0; index < trace.size(); ++index) {
+        const auto& access = trace[index];
+        rows += CsvRow({
+            std::to_string(index),
+            AccessTypeName(access),
+            HexAddressText(access.address),
+            std::to_string(access.address)});
+    }
+    return rows;
+}
+
+void AppendTraceTxt(std::string& text, const std::vector<MemoryAccess>& trace) {
+    text += "[Trace]\r\n";
+    text += "  Index  Type  Address\r\n";
+    for (std::size_t index = 0; index < trace.size(); ++index) {
+        text += "  " + TraceTxtRow(index, trace[index]) + "\r\n";
+    }
 }
 
 std::string ConfigurationCsvRows(const SimulationConfig& config) {
@@ -364,15 +396,7 @@ std::string ExperimentExporter::FormatExperimentCsv(const ExperimentExportData& 
     csv += "\r\n";
 
     csv += "[Trace]\r\n";
-    csv += CsvRow({"Index", "Type", "Address (hex)", "Address (decimal)"});
-    for (std::size_t index = 0; index < data.trace.size(); ++index) {
-        const auto& access = data.trace[index];
-        csv += CsvRow({
-            std::to_string(index),
-            AccessTypeName(access),
-            HexAddressText(access.address),
-            std::to_string(access.address)});
-    }
+    csv += TraceCsvRows(data.trace);
     csv += "\r\n";
 
     csv += "[Per-Access Results]\r\n";
@@ -439,11 +463,7 @@ std::string ExperimentExporter::FormatExperimentTxt(const ExperimentExportData& 
     AppendTraceSummaryTxt(text, data);
     text += "\r\n";
 
-    text += "[Trace]\r\n";
-    text += "  Index  Type  Address\r\n";
-    for (std::size_t index = 0; index < data.trace.size(); ++index) {
-        text += "  " + TraceTxtRow(index, data.trace[index]) + "\r\n";
-    }
+    AppendTraceTxt(text, data.trace);
     text += "\r\n";
 
     text += "[Per-Access Results]\r\n";
@@ -484,6 +504,10 @@ std::string ExperimentExporter::FormatComparisonCsv(const ExperimentExportData& 
     csv += TraceSummaryCsvRows(data);
     csv += "\r\n";
 
+    csv += "[Trace]\r\n";
+    csv += TraceCsvRows(data.trace);
+    csv += "\r\n";
+
     csv += "[Comparison]\r\n";
     csv += ComparisonCsvTable(data);
     csv += "\r\n";
@@ -504,6 +528,9 @@ std::string ExperimentExporter::FormatComparisonTxt(const ExperimentExportData& 
     text += "\r\n";
 
     AppendTraceSummaryTxt(text, data);
+    text += "\r\n";
+
+    AppendTraceTxt(text, data.trace);
     text += "\r\n";
 
     text += "[Comparison]\r\n";

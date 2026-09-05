@@ -8,7 +8,7 @@
 主题：把单次模拟与策略对比结果导出为可复用实验材料
 前置：阶段 05 已合入 dev；开始编码前先把最新 origin/dev 合入本分支
 优先级：可选，时间不足时可以取消
-状态：已实现，待验收
+状态：已修复并通过开发侧自动化验收，待 PR 合入与组长 UI 复验
 ```
 
 本阶段只负责把程序已经产生的数据整理为文件，不增加新的 Cache 模型。导出内容应便于写实验报告、使用 Excel 查看以及复现课堂演示。
@@ -112,3 +112,9 @@ Add cache experiment result export
 - 主界面新增"Export experiment..."按钮（`IDC_BUTTON_EXPORT`），仅在已执行至少一次访问后启用；对比窗口新增"Export results..."按钮（`IDC_BUTTON_COMPARE_EXPORT`），仅在运行对比后启用。保存对话框提供 `.csv` / `.txt` 过滤器与默认文件名，取消保存不视为错误。
 - 地址统一 `0x` 十六进制并保留十进制列；无效 line index 输出为空或 `N/A`；L1 Hit 时 L2 各列留空并在 TXT 中标注 `not accessed (L1 hit)`；仅在实际发生驱逐时输出被驱逐 block；所有 CSV 字段正确转义。
 - 新增 `B5CacheCoreTests/ExportTests.cpp`（6 个测试）并注册到 `TestSuites.h` / `TestMain.cpp`（这两个公共文件各加一行，与阶段 05 做法一致）。
+
+## 补丁修复与验收（2026-09-06）
+
+- 对比 CSV/TXT 现在同时导出完整的共享 Trace，包含序号、读写类型、十六进制地址和十进制地址，可直接复现本次多方案实验。
+- 对比摘要的 `Executed accesses` 改为使用对比结果中的实际访问次数，不再因单实验逐条结果为空而错误显示为 `0`。
+- 新增针对性自动测试，锁定对比 CSV/TXT 的完整 Trace 和正确执行次数；Debug x64 构建为 0 警告、0 错误，核心回归 75/75 通过。
