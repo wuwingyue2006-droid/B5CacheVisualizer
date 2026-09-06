@@ -69,3 +69,14 @@ B Mapping
 ```
 
 每合并一个 PR，都在最新 `dev` 上重新运行完整测试。
+
+## 6. 冲优阶段任务卡
+
+基础版完成后的扩展与交付任务按顺序执行：
+
+- `03-animation-controller.md`：动画控制器；
+- `04-locality-trace-generator.md`：局部性 Trace 生成器；
+- `05-strategy-comparison.md`：策略对比实验；
+- `06-result-export.md`：实验结果导出；
+- `07-stability-testing.md`：集中稳定性测试；
+- `08-release-preparation.md`：Release 与程序交付。
