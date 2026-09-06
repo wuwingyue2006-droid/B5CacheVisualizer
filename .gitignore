@@ -15,6 +15,7 @@ x86/
 bin/
 obj/
 TestResults/
+dist/
 
 # Intermediate files
 *.obj

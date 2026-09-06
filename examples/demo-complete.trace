@@ -1,0 +1,6 @@
+# Memory Miss -> L1 Hit -> L2 Hit -> Dirty and eviction
+R 0x00
+R 0x00
+R 0x40
+R 0x00
+W 0x80
