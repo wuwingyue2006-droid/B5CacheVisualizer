@@ -98,6 +98,7 @@ BEGIN_MESSAGE_MAP(CB5CacheVisualizerDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BUTTON_STOP, &CB5CacheVisualizerDlg::OnStopPlayback)
     ON_BN_CLICKED(IDC_BUTTON_GENERATE_TRACE, &CB5CacheVisualizerDlg::OnGenerateTrace)
     ON_BN_CLICKED(IDC_BUTTON_COMPARE, &CB5CacheVisualizerDlg::OnCompareStrategies)
+    ON_BN_CLICKED(IDC_BUTTON_EXPORT, &CB5CacheVisualizerDlg::OnExportExperiment)
     ON_CBN_SELCHANGE(IDC_COMBO_PLAYBACK_SPEED, &CB5CacheVisualizerDlg::OnPlaybackSpeedChanged)
     ON_EN_CHANGE(IDC_EDIT_TRACE, &CB5CacheVisualizerDlg::OnTraceTextChanged)
     ON_EN_CHANGE(IDC_EDIT_L1_SIZE, &CB5CacheVisualizerDlg::OnConfigurationChanged)
@@ -968,6 +969,7 @@ void CB5CacheVisualizerDlg::UpdateControlStates() {
     enable(IDC_COMBO_PLAYBACK_SPEED, true);
     enable(IDC_BUTTON_GENERATE_TRACE, !sessionLocked);
     enable(IDC_BUTTON_COMPARE, !sessionLocked);
+    enable(IDC_BUTTON_EXPORT, visualization_.FrameCount() > 0);
 }
 
 void CB5CacheVisualizerDlg::RefreshTraceStatus() {
@@ -1356,6 +1358,51 @@ void CB5CacheVisualizerDlg::OnCompareStrategies() {
     } catch (const std::exception& error) {
         suppressTraceChange_ = false;
         suppressConfigurationChange_ = false;
+        ShowUserError(error.what());
+    }
+}
+
+void CB5CacheVisualizerDlg::OnExportExperiment() {
+    if (simulator_ == nullptr || visualization_.FrameCount() == 0) {
+        ShowUserError("Run at least one access before exporting.");
+        return;
+    }
+
+    b5cache::ExperimentExportData data;
+    data.config = simulator_->Config();
+    data.trace = trace_;
+    data.accessResults.reserve(visualization_.FrameCount());
+    for (const auto& frame : visualization_.Frames()) {
+        data.accessResults.push_back(frame.result);
+    }
+    data.statistics = visualization_.Frames().back().statistics;
+    data.exportTime = b5cache::ExperimentExporter::CurrentTimeStamp();
+
+    const std::string stamp = b5cache::ExperimentExporter::FileTimeStamp();
+    CString defaultName;
+    defaultName.Format(L"B5CacheExperiment_%S.csv", stamp.c_str());
+    CFileDialog saveDialog(
+        FALSE,
+        L"csv",
+        defaultName,
+        OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY,
+        L"CSV Files (*.csv)|*.csv|Text Files (*.txt)|*.txt||");
+    if (saveDialog.DoModal() != IDOK) {
+        return;  // Cancelling the save dialog is not an error.
+    }
+
+    const std::filesystem::path path(saveDialog.GetPathName().GetString());
+    try {
+        const bool asCsv = _wcsicmp(path.extension().c_str(), L".csv") == 0;
+        const std::string content = asCsv
+            ? b5cache::ExperimentExporter::FormatExperimentCsv(data)
+            : b5cache::ExperimentExporter::FormatExperimentTxt(data);
+        b5cache::ExperimentExporter::WriteUtf8File(path, content);
+
+        CString message;
+        message.Format(L"Exported: %s", saveDialog.GetPathName().GetString());
+        SetDlgItemText(IDC_STATIC_LAST_RESULT, message);
+    } catch (const std::exception& error) {
         ShowUserError(error.what());
     }
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "experiment/ComparisonRunner.h"
+#include "export/ExperimentExporter.h"
 #include "resource.h"
 
 #include <vector>
@@ -33,6 +34,7 @@ private:
     afx_msg void OnUseTeachingTrace();
     afx_msg void OnRunComparison();
     afx_msg void OnLoadSelected();
+    afx_msg void OnExportComparison();
     afx_msg void OnDrawItem(int controlId, LPDRAWITEMSTRUCT drawItem);
 
     void RefreshPlans();

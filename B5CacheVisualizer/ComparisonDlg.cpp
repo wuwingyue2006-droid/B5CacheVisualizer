@@ -3,9 +3,11 @@
 #include "ComparisonDlg.h"
 
 #include <atlconv.h>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -30,6 +32,7 @@ BEGIN_MESSAGE_MAP(CComparisonDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BUTTON_COMPARE_TEACHING, &CComparisonDlg::OnUseTeachingTrace)
     ON_BN_CLICKED(IDC_BUTTON_COMPARE_RUN, &CComparisonDlg::OnRunComparison)
     ON_BN_CLICKED(IDC_BUTTON_COMPARE_LOAD, &CComparisonDlg::OnLoadSelected)
+    ON_BN_CLICKED(IDC_BUTTON_COMPARE_EXPORT, &CComparisonDlg::OnExportComparison)
     ON_WM_DRAWITEM()
 END_MESSAGE_MAP()
 
@@ -111,6 +114,9 @@ void CComparisonDlg::RefreshResults() {
     const CA2W wide(text.str().c_str(), CP_UTF8);
     SetDlgItemText(IDC_EDIT_COMPARE_RESULTS, wide);
     if (auto* chart = GetDlgItem(IDC_STATIC_COMPARE_CHART); chart != nullptr) chart->Invalidate(FALSE);
+    if (auto* exportButton = GetDlgItem(IDC_BUTTON_COMPARE_EXPORT); exportButton != nullptr) {
+        exportButton->EnableWindow(results_.empty() ? FALSE : TRUE);
+    }
 }
 
 void CComparisonDlg::OnPlanSelected() {
@@ -193,6 +199,48 @@ void CComparisonDlg::OnLoadSelected() {
     loadedPlanIndex_ = index;
     loadRequested_ = true;
     CDialogEx::OnOK();
+}
+
+void CComparisonDlg::OnExportComparison() {
+    if (results_.empty()) {
+        AfxMessageBox(L"Run the comparison before exporting.", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+
+    b5cache::ExperimentExportData data;
+    data.comparisonPlans = plans_;
+    data.comparisonResults = results_;
+    data.trace = trace_;
+    data.exportTime = b5cache::ExperimentExporter::CurrentTimeStamp();
+
+    const std::string stamp = b5cache::ExperimentExporter::FileTimeStamp();
+    CString defaultName;
+    defaultName.Format(L"B5CacheComparison_%S.csv", stamp.c_str());
+    CFileDialog saveDialog(
+        FALSE,
+        L"csv",
+        defaultName,
+        OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY,
+        L"CSV Files (*.csv)|*.csv|Text Files (*.txt)|*.txt||");
+    if (saveDialog.DoModal() != IDOK) {
+        return;  // Cancelling the save dialog is not an error.
+    }
+
+    const std::filesystem::path path(saveDialog.GetPathName().GetString());
+    try {
+        const bool asCsv = _wcsicmp(path.extension().c_str(), L".csv") == 0;
+        const std::string content = asCsv
+            ? b5cache::ExperimentExporter::FormatComparisonCsv(data)
+            : b5cache::ExperimentExporter::FormatComparisonTxt(data);
+        b5cache::ExperimentExporter::WriteUtf8File(path, content);
+
+        CString message;
+        message.Format(L"Exported comparison to: %s", saveDialog.GetPathName().GetString());
+        SetDlgItemText(IDC_STATIC_COMPARE_TRACE, message);
+    } catch (const std::exception& error) {
+        const CA2W wideMessage(error.what(), CP_UTF8);
+        AfxMessageBox(wideMessage, MB_OK | MB_ICONERROR);
+    }
 }
 
 void CComparisonDlg::OnDrawItem(const int controlId, LPDRAWITEMSTRUCT drawItem) {

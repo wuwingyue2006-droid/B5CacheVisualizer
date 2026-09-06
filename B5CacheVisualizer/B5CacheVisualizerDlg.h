@@ -3,6 +3,7 @@
 #include "VisualizationController.h"
 #include "core/CacheSimulator.h"
 #include "experiment/ComparisonRunner.h"
+#include "export/ExperimentExporter.h"
 
 #include <memory>
 #include <vector>
@@ -46,6 +47,7 @@ private:
     afx_msg void OnPlaybackSpeedChanged();
     afx_msg void OnGenerateTrace();
     afx_msg void OnCompareStrategies();
+    afx_msg void OnExportExperiment();
     afx_msg void OnTraceTextChanged();
     afx_msg void OnConfigurationChanged();
     afx_msg void OnTimer(UINT_PTR timerId);
