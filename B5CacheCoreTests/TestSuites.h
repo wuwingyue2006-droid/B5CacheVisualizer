@@ -11,5 +11,6 @@ void AddStatisticsTests(TestList& tests);
 void AddTraceTests(TestList& tests);
 void AddComparisonTests(TestList& tests);
 void AddExportTests(TestList& tests);
+void AddStabilityTests(TestList& tests);
 
 }  // namespace b5cache::tests
