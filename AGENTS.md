@@ -46,3 +46,32 @@ git branch --show-current
 ## 完成汇报
 
 AI 最终应告诉成员：修改了哪些文件、实现了什么、如何测试、测试结果、是否修改公共接口，以及建议使用的 commit 信息。AI 不得自行把个人分支合并到 `dev` 或 `main`。
+
+## Cursor Cloud specific instructions
+
+Cloud Agent 虚拟机是 Ubuntu Linux，基础镜像已包含 `g++`（C++17）。环境安装只确认 `build-essential`，不启动图形界面，也没有需要常驻的服务。
+
+MFC 程序 `B5CacheVisualizer` 依赖 Windows、Visual Studio 2022 和 MFC。在 Windows 上用 `scripts/build.ps1` 与 `scripts/test.ps1`。Linux 上不能启动该窗口。
+
+核心模拟器与 `B5CacheCoreTests` 不包含 MFC。在仓库根目录编译并运行全部核心测试：
+
+```bash
+g++ -std=c++17 -Wall -Wextra -D_DEBUG -I src -I B5CacheCoreTests \
+  B5CacheCoreTests/CoreTests.cpp \
+  B5CacheCoreTests/MappingTests.cpp \
+  B5CacheCoreTests/ReplacementTests.cpp \
+  B5CacheCoreTests/StatisticsTests.cpp \
+  B5CacheCoreTests/TestMain.cpp \
+  B5CacheCoreTests/TraceTests.cpp \
+  src/common/CacheTypes.cpp \
+  src/core/CacheLevel.cpp \
+  src/core/CacheSimulator.cpp \
+  src/mapping/MappingStrategies.cpp \
+  src/replacement/ReplacementPolicies.cpp \
+  src/statistics/CacheStatistics.cpp \
+  src/trace/MemoryTraceParser.cpp \
+  -o /tmp/B5CacheCoreTests
+/tmp/B5CacheCoreTests
+```
+
+可执行文件放在 `/tmp`，不要提交 `bin/`、`obj/` 或测试二进制。
